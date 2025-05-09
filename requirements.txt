@@ -1,16 +1,16 @@
-# TensorFlow (includes GPU support; requires system CUDA/cuDNN 11.x)
+# TensorFlow (GPU-enabled; requires system CUDA/cuDNN 11.x)
 tensorflow==2.12.0
 
-# HuggingFace datasets for loading CNN/DailyMail, Reddit TIFU, BillSum, etc.
+# HuggingFace datasets & hub
 datasets==2.14.2
 huggingface-hub==0.17.3
 
-# Core numerical & plotting libraries
-numpy==1.25.1
-matplotlib==3.7.1
+# NumPy must be >=1.22,<1.24 to satisfy TF 2.12
+numpy>=1.22,<1.24
 
-# Progress bar for dataset downloads/preprocessing
+# Plotting and progress
+matplotlib==3.7.1
 tqdm==4.65.0
 
-# (Optional) pin protobuf for TF compatibility
+# Protobuf compatibility
 protobuf>=3.20.0,<4.0.0
