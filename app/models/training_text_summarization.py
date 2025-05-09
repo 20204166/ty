@@ -154,6 +154,9 @@ def train_model(data_path, epochs=10, batch_size=64, emb_dim=50):
     else:
         tok_in = create_tokenizer(inputs)
         tok_tgt = create_tokenizer(targets)
+
+        os.makedirs(os.path.dirname(tok_in_path), exist_ok=True)
+        
         with open(tok_in_path, 'w', encoding='utf-8') as f:
             f.write(tok_in.to_json())
         with open(tok_tgt_path, 'w', encoding='utf-8') as f:
