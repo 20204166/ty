@@ -148,6 +148,9 @@ def train_model(data_path, epochs=10, batch_size=64, emb_dim=50):
 
     tok_in_path = "app/models/saved_model/tokenizer_input.json"
     tok_tgt_path = "app/models/saved_model/tokenizer_target.json"
+    
+    os.makedirs(os.path.dirname(tok_in_path), exist_ok=True)
+
     if os.path.exists(tok_in_path) and os.path.exists(tok_tgt_path):
         tok_in = load_tokenizer(tok_in_path)
         tok_tgt = load_tokenizer(tok_tgt_path)
@@ -155,12 +158,11 @@ def train_model(data_path, epochs=10, batch_size=64, emb_dim=50):
         tok_in = create_tokenizer(inputs)
         tok_tgt = create_tokenizer(targets)
 
-        os.makedirs(os.path.dirname(tok_in_path), exist_ok=True)
-        
         with open(tok_in_path, 'w', encoding='utf-8') as f:
             f.write(tok_in.to_json())
         with open(tok_tgt_path, 'w', encoding='utf-8') as f:
             f.write(tok_tgt.to_json())
+
     vs_in = len(tok_in.word_index) + 1
     vs_tgt = len(tok_tgt.word_index) + 1
 
