@@ -143,7 +143,6 @@ class CustomEval(Callback):
 def train_model(data_path, epochs=10, batch_size=128, emb_dim=50):
     inputs, targets = load_training_data(data_path)
     
-    strategy = tf.distribute.MirroredStrategy()
     split = int(0.9 * len(inputs))
     train_in, train_tgt = inputs[:split], targets[:split]
     val_in, val_tgt = inputs[split:], targets[split:]
