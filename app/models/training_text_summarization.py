@@ -60,6 +60,7 @@ def load_training_data(data_path: str):
 def create_tokenizer(texts, oov_token="<OOV>"):
     tok = Tokenizer(oov_token=oov_token)
     tok.fit_on_texts(texts)
+    tok.num_words = len(tok.word_index) + 1
     return tok
 
 def load_tokenizer(path: str):
@@ -153,7 +154,10 @@ def train_model(data_path, epochs=10, batch_size=64, emb_dim=50):
     else:
         tok_in = create_tokenizer(inputs)
         tok_tgt = create_tokenizer(targets)
-
+        with open(tok_in_path, 'w', encoding='utf-8') as f:
+            f.write(tok_in.to_json())
+        with open(tok_tgt_path, 'w', encoding='utf-8') as f:
+            f.write(tok_tgt.to_json())
     vs_in = len(tok_in.word_index) + 1
     vs_tgt = len(tok_tgt.word_index) + 1
 
