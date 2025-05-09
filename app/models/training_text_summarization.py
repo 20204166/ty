@@ -146,24 +146,26 @@ def train_model(data_path, epochs=10, batch_size=64, emb_dim=50):
     train_in, train_tgt = inputs[:split], targets[:split]
     val_in, val_tgt = inputs[split:], targets[split:]
 
-    tok_in_path = "app/models/saved_model/tokenizer_input.json"
-    tok_tgt_path = "app/models/saved_model/tokenizer_target.json"
+
+    save_dir     = "app/models/saved_model"
+    tok_in_path  = f"{save_dir}/tokenizer_input.json"
+    tok_tgt_path = f"{save_dir}/tokenizer_target.json"
+    model_path   = f"{save_dir}/summarization_model.keras"
     
     os.makedirs(os.path.dirname(tok_in_path), exist_ok=True)
 
     if os.path.exists(tok_in_path) and os.path.exists(tok_tgt_path):
-        tok_in = load_tokenizer(tok_in_path)
+        tok_in  = load_tokenizer(tok_in_path)
         tok_tgt = load_tokenizer(tok_tgt_path)
     else:
-        tok_in = create_tokenizer(inputs)
+        tok_in  = create_tokenizer(inputs)
         tok_tgt = create_tokenizer(targets)
-
         with open(tok_in_path, 'w', encoding='utf-8') as f:
             f.write(tok_in.to_json())
         with open(tok_tgt_path, 'w', encoding='utf-8') as f:
             f.write(tok_tgt.to_json())
 
-    vs_in = len(tok_in.word_index) + 1
+    vs_in  = len(tok_in.word_index) + 1
     vs_tgt = len(tok_tgt.word_index) + 1
 
     train_enc = preprocess_texts(train_in, tok_in, max_length_input)
@@ -180,14 +182,15 @@ def train_model(data_path, epochs=10, batch_size=64, emb_dim=50):
     train_ds = train_ds.shuffle(1000).batch(batch_size).prefetch(tf.data.AUTOTUNE)
     val_ds = val_ds.batch(batch_size).prefetch(tf.data.AUTOTUNE)
 
-    model_path = "app/models/saved_model/summarization_model.keras"
-    os.makedirs(os.path.dirname(model_path), exist_ok=True)
-    if os.path.exists(model_path):
+    
+    if os.path.exists(model_path) \
+       and os.path.exists(tok_in_path) \
+       and os.path.exists(tok_tgt_path):
         print("Loading model from disk")
         model = load_model(model_path)
     else:
-        model = build_seq2seq_model(vs_in, vs_tgt, emb_dim, max_length_input, max_length_target)
-
+        model = build_seq2seq_model(vs_in, vs_tgt, emb_dim,
+                                    max_length_input, max_length_target)
     callbacks = [
         EarlyStopping(monitor='loss', patience=3, restore_best_weights=True),
         ModelCheckpoint(model_path, save_best_only=True, verbose=1),
