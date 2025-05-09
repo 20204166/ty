@@ -126,19 +126,27 @@ def plot_history(hist, save_dir):
     plt.savefig(out_path)
     print(f"Saved plot to {out_path}")
 
-class CustomEval(Callback):
+class CustomEval(tf.keras.callbacks.Callback):
     def __init__(self, val_ds):
         super().__init__()
         self.val_ds = val_ds
+
     def on_epoch_end(self, epoch, logs=None):
-        total, correct = 0, 0
+        total = 0
+        correct = 0
+        # iterate over your batched validation set
         for (enc_in, dec_in), dec_tgt in self.val_ds:
-            preds = self.model.predict([enc_in, dec_in])
-            idx = np.argmax(preds, axis=-1)
-            mask = dec_tgt != 0
-            correct += np.sum((idx == dec_tgt) & mask)
-            total += np.sum(mask)
+            # run forward pass (silent)
+            preds = self.model.predict([enc_in, dec_in], verbose=0)
+            # get token‐ids
+            idx_np   = np.argmax(preds, axis=-1)
+            tgt_np   = dec_tgt.numpy()             # <-- convert to NumPy
+            mask     = tgt_np != 0                 # ignore padding=0
+            # count matches only where mask=True
+            correct += np.sum((idx_np == tgt_np) & mask)
+            total   += np.sum(mask)
         print(f"Validation Token Accuracy: {correct/total:.4f}")
+
 
 def train_model(data_path, epochs=10, batch_size=128, emb_dim=50):
     inputs, targets = load_training_data(data_path)
