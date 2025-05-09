@@ -137,7 +137,7 @@ class CustomEval(tf.keras.callbacks.Callback):
         # iterate over your batched validation set
         for (enc_in, dec_in), dec_tgt in self.val_ds:
             # run forward pass (silent)
-            preds = self.model.predict([enc_in, dec_in], verbose=0)
+            preds = self.model.predict([enc_in, dec_in], verbose=2)
             # get token‐ids
             idx_np   = np.argmax(preds, axis=-1)
             tgt_np   = dec_tgt.numpy()             # <-- convert to NumPy
