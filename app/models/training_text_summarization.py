@@ -142,6 +142,8 @@ class CustomEval(Callback):
 
 def train_model(data_path, epochs=10, batch_size=64, emb_dim=50):
     inputs, targets = load_training_data(data_path)
+    
+    strategy = tf.distribute.MirroredStrategy()
     split = int(0.9 * len(inputs))
     train_in, train_tgt = inputs[:split], targets[:split]
     val_in, val_tgt = inputs[split:], targets[split:]
@@ -182,14 +184,14 @@ def train_model(data_path, epochs=10, batch_size=64, emb_dim=50):
     train_ds = train_ds.shuffle(1000).batch(batch_size).prefetch(tf.data.AUTOTUNE)
     val_ds = val_ds.batch(batch_size).prefetch(tf.data.AUTOTUNE)
 
-    
-    if os.path.exists(model_path) \
-       and os.path.exists(tok_in_path) \
-       and os.path.exists(tok_tgt_path):
-        print("Loading model from disk")
-        model = load_model(model_path)
-    else:
-        model = build_seq2seq_model(vs_in, vs_tgt, emb_dim,
+    with strategy.scope():
+        if os.path.exists(model_path) \
+           and os.path.exists(tok_in_path) \
+           and os.path.exists(tok_tgt_path):
+           print("Loading model from disk")
+           model = load_model(model_path)
+        else:
+            model = build_seq2seq_model(vs_in, vs_tgt, emb_dim,
                                     max_length_input, max_length_target)
     callbacks = [
         EarlyStopping(monitor='loss', patience=3, restore_best_weights=True),
