@@ -148,7 +148,7 @@ class CustomEval(tf.keras.callbacks.Callback):
         print(f"Validation Token Accuracy: {correct/total:.4f}")
 
 
-def train_model(data_path, epochs=10, batch_size=128, emb_dim=50):
+def train_model(data_path, epochs=10, batch_size=128, train_from_scratch=False, emb_dim=50):
     inputs, targets = load_training_data(data_path)
     
     strategy = tf.distribute.MirroredStrategy()
@@ -203,11 +203,9 @@ def train_model(data_path, epochs=10, batch_size=128, emb_dim=50):
               .prefetch(tf.data.AUTOTUNE))
 
     with strategy.scope():
-        if os.path.exists(model_path) \
-           and os.path.exists(tok_in_path) \
-           and os.path.exists(tok_tgt_path):
-           print("Loading model from disk")
-           model = load_model(model_path)
+        if (not train_from_scratch) and os.path.exists(model_path):
+            print("Loading model from disk")
+            model = load_model(model_path)
         else:
             model = build_seq2seq_model(
                 vs_in, vs_tgt, emb_dim,
