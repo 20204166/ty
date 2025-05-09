@@ -190,7 +190,7 @@ def train_model(data_path, epochs=10, batch_size=128, emb_dim=50):
     val_ds = (
         tf.data.Dataset
           .from_tensor_slices(((val_enc, val_dec_in), val_dec_tgt))
-          .cache()                      # <-- cache validation too
+          .cache()                     
           .batch(batch_size)
           .prefetch(tf.data.AUTOTUNE)
     )
