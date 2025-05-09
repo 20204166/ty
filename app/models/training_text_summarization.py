@@ -141,85 +141,95 @@ class CustomEval(Callback):
         print(f"Validation Token Accuracy: {correct/total:.4f}")
 
 def train_model(data_path, epochs=10, batch_size=128, emb_dim=50):
+    inputs, targets = load_training_data(data_path)
     
-    inputs, targets = load_training_data(data_path)
-    inputs, targets = load_training_data(data_path)
+    strategy = tf.distribute.MirroredStrategy()
+
     split = int(0.9 * len(inputs))
     train_in, train_tgt = inputs[:split], targets[:split]
-    val_in,   val_tgt   = inputs[split:], targets[split:]
+    val_in, val_tgt = inputs[split:], targets[split:]
 
-    # 2) Prepare save paths
+
     save_dir     = "app/models/saved_model"
     tok_in_path  = f"{save_dir}/tokenizer_input.json"
     tok_tgt_path = f"{save_dir}/tokenizer_target.json"
     model_path   = f"{save_dir}/summarization_model.keras"
+    
     os.makedirs(save_dir, exist_ok=True)
 
-    # 3) Load or build tokenizers
     if os.path.exists(tok_in_path) and os.path.exists(tok_tgt_path):
         tok_in  = load_tokenizer(tok_in_path)
         tok_tgt = load_tokenizer(tok_tgt_path)
     else:
         tok_in  = create_tokenizer(inputs)
         tok_tgt = create_tokenizer(targets)
-        with open(tok_in_path, 'w', encoding='utf-8') as f: f.write(tok_in.to_json())
-        with open(tok_tgt_path,'w', encoding='utf-8') as f: f.write(tok_tgt.to_json())
+        with open(tok_in_path, 'w', encoding='utf-8') as f:
+            f.write(tok_in.to_json())
+        with open(tok_tgt_path, 'w', encoding='utf-8') as f:
+            f.write(tok_tgt.to_json())
 
-    # 4) Enable mixed precision
+    vs_in  = len(tok_in.word_index) + 1
+    vs_tgt = len(tok_tgt.word_index) + 1
+
     from tensorflow.keras import mixed_precision
     mixed_precision.set_global_policy('mixed_float16')
 
-    # 5) Preprocess into numpy arrays
-    train_enc      = preprocess_texts(train_in, tok_in,  max_length_input)
-    train_dec_seq  = preprocess_texts(train_tgt, tok_tgt, max_length_target)
-    train_dec_in, train_dec_tgt = prepare_decoder_sequences(train_dec_seq)
+    train_enc = preprocess_texts(train_in, tok_in, max_length_input)
+    train_dec = preprocess_texts(train_tgt, tok_tgt, max_length_target)
+    train_dec_in, train_dec_tgt = prepare_decoder_sequences(train_dec)
 
-    val_enc        = preprocess_texts(val_in,   tok_in,  max_length_input)
-    val_dec_seq    = preprocess_texts(val_tgt,  tok_tgt, max_length_target)
-    val_dec_in,   val_dec_tgt   = prepare_decoder_sequences(val_dec_seq)
+    val_enc = preprocess_texts(val_in, tok_in, max_length_input)
+    val_dec = preprocess_texts(val_tgt, tok_tgt, max_length_target)
+    val_dec_in, val_dec_tgt = prepare_decoder_sequences(val_dec)
 
-    # 6) Build TF Datasets (cache before shuffle!)
-    train_ds = (
-        tf.data.Dataset
-          .from_tensor_slices(((train_enc, train_dec_in), train_dec_tgt))
-          .cache()
-          .shuffle(1000)
-          .batch(batch_size)
-          .prefetch(tf.data.AUTOTUNE)
-    )
-    val_ds = (
-        tf.data.Dataset
-          .from_tensor_slices(((val_enc, val_dec_in), val_dec_tgt))
-          .cache()
-          .batch(batch_size)
-          .prefetch(tf.data.AUTOTUNE)
-    )
 
-    # 7) Create MirroredStrategy once
-    strategy = tf.distribute.MirroredStrategy()
+    train_ds = (tf.data.Dataset.from_tensor_slices(((train_enc, train_dec_in), train_dec_tgt))
+                .shuffle(1000)
+                .cache()  
+                .batch(batch_size)
+                .map(lambda x, y: (x, y), num_parallel_calls=tf.data.AUTOTUNE)
+                .prefetch(tf.data.AUTOTUNE))
+    val_ds = (tf.data.Dataset.from_tensor_slices(((val_enc, val_dec_in), val_dec_tgt))
+              .cache()
+              .batch(batch_size)
+              .prefetch(tf.data.AUTOTUNE))
 
-    # 8) Build/load+compile AND fit inside the same strategy.scope()
+    with strategy.scope():
+        if os.path.exists(model_path) \
+           and os.path.exists(tok_in_path) \
+           and os.path.exists(tok_tgt_path):
+           print("Loading model from disk")
+           model = load_model(model_path)
+        else:
+            model = build_seq2seq_model(vs_in, vs_tgt, emb_dim,
+                                    max_length_input, max_length_target)
+    callbacks = [
+        EarlyStopping(monitor='loss', patience=3, restore_best_weights=True),
+        ModelCheckpoint(model_path, save_best_only=True, verbose=1),
+        CustomEval(val_ds)
+    ]
+
+    # 2) Build/load + compile + fit all inside strategy.scope()
     with strategy.scope():
         # a) Load existing or build new model
         if os.path.exists(model_path):
             print("Loading model from disk")
             model = load_model(model_path)
+            # loaded model keeps its compile settings
         else:
-            vs_in  = len(tok_in.word_index)  + 1
-            vs_tgt = len(tok_tgt.word_index) + 1
             model = build_seq2seq_model(
                 vs_in, vs_tgt, emb_dim,
                 max_length_input, max_length_target
             )
 
-        # b) Define callbacks
+        # b) (Re)define callbacks inside scope
         callbacks = [
             EarlyStopping(monitor='loss', patience=3, restore_best_weights=True),
             ModelCheckpoint(model_path, save_best_only=True, verbose=1),
             CustomEval(val_ds)
         ]
 
-        # c) Train (will now shard your batch across both GPUs)
+        # c) Train—this will now shard batches across your GPUs
         history = model.fit(
             train_ds,
             epochs=epochs,
@@ -228,11 +238,13 @@ def train_model(data_path, epochs=10, batch_size=128, emb_dim=50):
             validation_data=val_ds
         )
 
-    # 9) After training: save tokenizers & plot
-    with open(tok_in_path, 'w', encoding='utf-8') as f: f.write(tok_in.to_json())
-    with open(tok_tgt_path,'w', encoding='utf-8') as f: f.write(tok_tgt.to_json())
-    plot_history(history, os.path.dirname(model_path))
+    # after training: save tokenizers, plot history, return model
+    with open(tok_in_path, 'w', encoding='utf-8') as f:
+        f.write(tok_in.to_json())
+    with open(tok_tgt_path, 'w', encoding='utf-8') as f:
+        f.write(tok_tgt.to_json())
 
+    plot_history(history, os.path.dirname(model_path))
     return model
 
 if __name__ == "__main__":
