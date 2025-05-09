@@ -181,17 +181,20 @@ def train_model(data_path, epochs=10, batch_size=128, emb_dim=50):
     val_dec = preprocess_texts(val_tgt, tok_tgt, max_length_target)
     val_dec_in, val_dec_tgt = prepare_decoder_sequences(val_dec)
 
-    train_ds = tf.data.Dataset.from_tensor_slices(((train_enc, train_dec_in), train_dec_tgt))
-    val_ds = tf.data.Dataset.from_tensor_slices(((val_enc, val_dec_in), val_dec_tgt))
-
-
 
     train_ds = (tf.data.Dataset.from_tensor_slices(((train_enc, train_dec_in), train_dec_tgt))
                 .shuffle(1000)
+                .cache()  
                 .batch(batch_size)
                 .map(lambda x, y: (x, y), num_parallel_calls=tf.data.AUTOTUNE)
                 .prefetch(tf.data.AUTOTUNE))
-    val_ds = val_ds.batch(batch_size).prefetch(tf.data.AUTOTUNE)
+    val_ds = (
+        tf.data.Dataset
+          .from_tensor_slices(((val_enc, val_dec_in), val_dec_tgt))
+          .cache()                      # <-- cache validation too
+          .batch(batch_size)
+          .prefetch(tf.data.AUTOTUNE)
+    )
 
     with strategy.scope():
         if os.path.exists(model_path) \
