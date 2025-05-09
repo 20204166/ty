@@ -231,8 +231,12 @@ def train_model(data_path, epochs=10, batch_size=128, train_from_scratch=False, 
     # after training: save tokenizers, plot history, return model
     with open(tok_in_path, 'w', encoding='utf-8') as f:
         f.write(tok_in.to_json())
+        f.flush()                # push Python buffer to OS
+        os.fsync(f.fileno()) 
     with open(tok_tgt_path, 'w', encoding='utf-8') as f:
         f.write(tok_tgt.to_json())
+        f.flush()                # push Python buffer to OS
+        os.fsync(f.fileno()) 
 
     plot_history(history, os.path.dirname(model_path))
     return model
