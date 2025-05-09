@@ -140,7 +140,7 @@ class CustomEval(Callback):
             total += np.sum(mask)
         print(f"Validation Token Accuracy: {correct/total:.4f}")
 
-def train_model(data_path, epochs=10, batch_size=64, emb_dim=50):
+def train_model(data_path, epochs=10, batch_size=128, emb_dim=50):
     inputs, targets = load_training_data(data_path)
     
     strategy = tf.distribute.MirroredStrategy()
@@ -170,6 +170,9 @@ def train_model(data_path, epochs=10, batch_size=64, emb_dim=50):
     vs_in  = len(tok_in.word_index) + 1
     vs_tgt = len(tok_tgt.word_index) + 1
 
+    from tensorflow.keras import mixed_precision
+    mixed_precision.set_global_policy('mixed_float16')
+
     train_enc = preprocess_texts(train_in, tok_in, max_length_input)
     train_dec = preprocess_texts(train_tgt, tok_tgt, max_length_target)
     train_dec_in, train_dec_tgt = prepare_decoder_sequences(train_dec)
@@ -181,7 +184,13 @@ def train_model(data_path, epochs=10, batch_size=64, emb_dim=50):
     train_ds = tf.data.Dataset.from_tensor_slices(((train_enc, train_dec_in), train_dec_tgt))
     val_ds = tf.data.Dataset.from_tensor_slices(((val_enc, val_dec_in), val_dec_tgt))
 
-    train_ds = train_ds.shuffle(1000).batch(batch_size).prefetch(tf.data.AUTOTUNE)
+
+
+    train_ds = (tf.data.Dataset.from_tensor_slices(((train_enc, train_dec_in), train_dec_tgt))
+                .shuffle(1000)
+                .batch(batch_size)
+                .map(lambda x, y: (x, y), num_parallel_calls=tf.data.AUTOTUNE)
+                .prefetch(tf.data.AUTOTUNE))
     val_ds = val_ds.batch(batch_size).prefetch(tf.data.AUTOTUNE)
 
     with strategy.scope():
