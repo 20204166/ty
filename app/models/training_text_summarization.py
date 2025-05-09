@@ -201,22 +201,6 @@ def train_model(data_path, epochs=10, batch_size=128, emb_dim=50):
            print("Loading model from disk")
            model = load_model(model_path)
         else:
-            model = build_seq2seq_model(vs_in, vs_tgt, emb_dim,
-                                    max_length_input, max_length_target)
-    callbacks = [
-        EarlyStopping(monitor='loss', patience=3, restore_best_weights=True),
-        ModelCheckpoint(model_path, save_best_only=True, verbose=1),
-        CustomEval(val_ds)
-    ]
-
-    # 2) Build/load + compile + fit all inside strategy.scope()
-    with strategy.scope():
-        # a) Load existing or build new model
-        if os.path.exists(model_path):
-            print("Loading model from disk")
-            model = load_model(model_path)
-            # loaded model keeps its compile settings
-        else:
             model = build_seq2seq_model(
                 vs_in, vs_tgt, emb_dim,
                 max_length_input, max_length_target
