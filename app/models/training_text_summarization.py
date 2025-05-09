@@ -150,20 +150,20 @@ class CustomEval(tf.keras.callbacks.Callback):
 
 def train_model(data_path, epochs=10, batch_size=128, train_from_scratch=False, emb_dim=50):
     inputs, targets = load_training_data(data_path)
-    
-    strategy = tf.distribute.MirroredStrategy()
-
-    split = int(0.9 * len(inputs))
-    train_in, train_tgt = inputs[:split], targets[:split]
-    val_in, val_tgt = inputs[split:], targets[split:]
-
-
     save_dir     = "app/models/saved_model"
     tok_in_path  = f"{save_dir}/tokenizer_input.json"
     tok_tgt_path = f"{save_dir}/tokenizer_target.json"
     model_path   = f"{save_dir}/summarization_model.keras"
     
     os.makedirs(save_dir, exist_ok=True)
+    
+
+    split = int(0.9 * len(inputs))
+    train_in, train_tgt = inputs[:split], targets[:split]
+    val_in, val_tgt = inputs[split:], targets[split:]
+
+    
+
 
     if os.path.exists(tok_in_path) and os.path.exists(tok_tgt_path):
         tok_in  = load_tokenizer(tok_in_path)
@@ -201,7 +201,9 @@ def train_model(data_path, epochs=10, batch_size=128, train_from_scratch=False, 
               .cache()
               .batch(batch_size)
               .prefetch(tf.data.AUTOTUNE))
-
+    
+    strategy = tf.distribute.MirroredStrategy()
+    
     with strategy.scope():
         if (not train_from_scratch) and os.path.exists(model_path):
             print("Loading model from disk")
