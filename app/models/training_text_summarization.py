@@ -152,7 +152,7 @@ def train_model(data_path, epochs=10, batch_size=64, emb_dim=50):
     tok_tgt_path = f"{save_dir}/tokenizer_target.json"
     model_path   = f"{save_dir}/summarization_model.keras"
     
-    os.makedirs(os.path.dirname(tok_in_path), exist_ok=True)
+    os.makedirs(save_dir, exist_ok=True)
 
     if os.path.exists(tok_in_path) and os.path.exists(tok_tgt_path):
         tok_in  = load_tokenizer(tok_in_path)
