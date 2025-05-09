@@ -199,9 +199,39 @@ def train_model(data_path, epochs=10, batch_size=64, emb_dim=50):
         CustomEval(val_ds)
     ]
 
-    with tf.device('/GPU:0'):
-        history = model.fit(train_ds, epochs=epochs, verbose=2, callbacks=callbacks, validation_data=val_ds)
+    # 1) Create a MirroredStrategy for multi-GPU
+    strategy = tf.distribute.MirroredStrategy()
 
+    # 2) Build/load + compile + fit all inside strategy.scope()
+    with strategy.scope():
+        # a) Load existing or build new model
+        if os.path.exists(model_path):
+            print("Loading model from disk")
+            model = load_model(model_path)
+            # loaded model keeps its compile settings
+        else:
+            model = build_seq2seq_model(
+                vs_in, vs_tgt, emb_dim,
+                max_length_input, max_length_target
+            )
+
+        # b) (Re)define callbacks inside scope
+        callbacks = [
+            EarlyStopping(monitor='loss', patience=3, restore_best_weights=True),
+            ModelCheckpoint(model_path, save_best_only=True, verbose=1),
+            CustomEval(val_ds)
+        ]
+
+        # c) Train—this will now shard batches across your GPUs
+        history = model.fit(
+            train_ds,
+            epochs=epochs,
+            verbose=2,
+            callbacks=callbacks,
+            validation_data=val_ds
+        )
+
+    # after training: save tokenizers, plot history, return model
     with open(tok_in_path, 'w', encoding='utf-8') as f:
         f.write(tok_in.to_json())
     with open(tok_tgt_path, 'w', encoding='utf-8') as f:
