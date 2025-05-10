@@ -28,7 +28,7 @@ print("Operation result shape:", c.shape)
 os.system("nvidia-smi")
 
 from tensorflow.keras.models import Model, load_model
-from tensorflow.keras.layers import Input, Embedding, Dense, Concatenate, Attention, Layer
+from tensorflow.keras.layers import Layer, Attention, Input, Embedding, Dense, Concatenate, LSTMCell, RNN
 from tensorflow.keras.preprocessing.text import Tokenizer
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, Callback
