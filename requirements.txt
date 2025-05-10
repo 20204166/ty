@@ -1,3 +1,7 @@
 datasets
 huggingface-hub
 tqdm
+fsspec==2024.10.0
+nvidia-cublas-cu12==12.4.5.8
+nvidia-cudnn-cu12==9.1.0.70
+nvidia-cufft-cu12==11.2.1.3
