@@ -123,29 +123,22 @@ def plot_history(hist, save_dir):
     out_path = os.path.join(save_dir, "training_progress.png")
     plt.savefig(out_path)
     print(f"Saved plot to {out_path}")
-
+    
 class CustomEval(tf.keras.callbacks.Callback):
     def __init__(self, val_ds):
         super().__init__()
         self.val_ds = val_ds
-        # prepare a metric instance
         self.metric = tf.keras.metrics.SparseCategoricalAccuracy(name="val_token_acc")
 
     def on_epoch_end(self, epoch, logs=None):
         # reset state at start of each epoch
-        self.metric.reset_states()
+        self.metric.reset_state()      # <-- use reset_state(), not reset_states()
 
         for (enc_in, dec_in), dec_tgt in self.val_ds:
-            # forward pass without verbosity
             preds = self.model([enc_in, dec_in], training=False)
-            # preds shape: (batch, seq_len, vocab); dec_tgt: (batch, seq_len)
-            # create a mask: 1 for real tokens, 0 for padding (assumes pad=0)
             mask = tf.cast(tf.not_equal(dec_tgt, 0), tf.float32)
-            # update the metric
-            # note: metric expects y_true shape (batch, seq_len), y_pred same + last dim vocab
             self.metric.update_state(dec_tgt, preds, sample_weight=mask)
 
-        # fetch the result
         acc = self.metric.result().numpy()
         print(f"Validation Token Accuracy: {acc:.4f}")
 
