@@ -80,14 +80,16 @@ def prepare_decoder_sequences(sequences):
         dec_tgt = np.pad(dec_tgt, ((0, 0), (0, pad_width)), mode='constant')
     return dec_in, dec_tgt
 
+
+
 class DotProductAttention(Layer):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.attn = Attention()
 
-    def call(self, inputs):
-        # inputs is [query, value]
-        return self.attn(inputs)
+    def call(self, inputs, mask=None):
+        return self.attn(inputs, mask=[None, None])
+
 
 def build_seq2seq_model(vocab_in, vocab_tgt, emb_dim, max_in, max_tgt):
     enc_inputs = Input(shape=(max_in,), name="enc_inputs")
