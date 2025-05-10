@@ -101,46 +101,52 @@ class DotProductAttention(Layer):
 
 def build_seq2seq_model(vocab_in, vocab_tgt, emb_dim, max_in, max_tgt):
     enc_inputs = Input(shape=(max_in,), name="enc_inputs")
-    # --- fused LSTM encoder with masking ---
     enc_emb = Embedding(
         vocab_in, emb_dim,
         mask_zero=True,
         name="enc_emb"
     )(enc_inputs)
+
+    # Encoder LSTM #1 (non‑cuDNN)
     out1, h1, c1 = tf.keras.layers.LSTM(
         64,
         return_sequences=True,
         return_state=True,
-        implementation=1,
+        use_cudnn_kernel=False,   # ← disable cuDNN here
         name="enc_lstm1"
     )(enc_emb)
+
+    # Encoder LSTM #2 (non‑cuDNN)
     enc_outs, h2, c2 = tf.keras.layers.LSTM(
         64,
         return_sequences=True,
         return_state=True,
-        implementation=1, 
+        use_cudnn_kernel=False,   # ← and here
         name="enc_lstm2"
     )(out1)
     enc_states = [h2, c2]
 
     dec_inputs = Input(shape=(max_tgt,), name="dec_inputs")
-    # --- fused LSTM decoder with masking, initialized from encoder ---
     dec_emb = Embedding(
         vocab_tgt, emb_dim,
         mask_zero=True,
         name="dec_emb"
     )(dec_inputs)
+
+    # Decoder LSTM #1 (non‑cuDNN)
     dec_out1, _, _ = tf.keras.layers.LSTM(
         64,
         return_sequences=True,
         return_state=True,
-        implementation=1,
+        use_cudnn_kernel=False,   # ← disable cuDNN here too
         name="dec_lstm1"
     )(dec_emb, initial_state=enc_states)
+
+    # Decoder LSTM #2 (non‑cuDNN)
     dec_out2 = tf.keras.layers.LSTM(
         64,
         return_sequences=True,
-        implementation=1, 
+        use_cudnn_kernel=False,   # ← and here
         name="dec_lstm2"
     )(dec_out1)
 
