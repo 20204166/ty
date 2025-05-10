@@ -28,7 +28,7 @@ print("Operation result shape:", c.shape)
 os.system("nvidia-smi")
 
 from tensorflow.keras.models import Model, load_model
-from tensorflow.keras.layers import Input, Embedding, Dense, Concatenate, Attention, LSTMCell
+from tensorflow.keras.layers import Input, Embedding, Dense, Concatenate, Attention 
 from tensorflow.keras.preprocessing.text import Tokenizer
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, Callback
@@ -82,23 +82,45 @@ def prepare_decoder_sequences(sequences):
 
 def build_seq2seq_model(vocab_in, vocab_tgt, emb_dim, max_in, max_tgt):
     enc_inputs = Input(shape=(max_in,), name="enc_inputs")
-    enc_emb = Embedding(vocab_in, emb_dim, name="enc_emb")(enc_inputs)
-    enc_cell1 = LSTMCell(64, name="enc_cell1")
-    enc_rnn1 = tf.keras.layers.RNN(enc_cell1, return_sequences=True, return_state=True, name="enc_rnn1")
-    out1, h1, c1 = enc_rnn1(enc_emb)
-    enc_cell2 = LSTMCell(64, name="enc_cell2")
-    enc_rnn2 = tf.keras.layers.RNN(enc_cell2, return_sequences=True, return_state=True, name="enc_rnn2")
-    enc_outs, h2, c2 = enc_rnn2(out1)
+    # --- fused LSTM encoder with masking ---
+    enc_emb = Embedding(
+        vocab_in, emb_dim,
+        mask_zero=True,
+        name="enc_emb"
+    )(enc_inputs)
+    out1, h1, c1 = tf.keras.layers.LSTM(
+        64,
+        return_sequences=True,
+        return_state=True,
+        name="enc_lstm1"
+    )(enc_emb)
+    enc_outs, h2, c2 = tf.keras.layers.LSTM(
+        64,
+        return_sequences=True,
+        return_state=True,
+        name="enc_lstm2"
+    )(out1)
     enc_states = [h2, c2]
 
     dec_inputs = Input(shape=(max_tgt,), name="dec_inputs")
-    dec_emb = Embedding(vocab_tgt, emb_dim, name="dec_emb")(dec_inputs)
-    dec_cell1 = LSTMCell(64, name="dec_cell1")
-    dec_rnn1 = tf.keras.layers.RNN(dec_cell1, return_sequences=True, return_state=True, name="dec_rnn1")
-    dec_out1, _, _ = dec_rnn1(dec_emb, initial_state=enc_states)
-    dec_cell2 = LSTMCell(64, name="dec_cell2")
-    dec_rnn2 = tf.keras.layers.RNN(dec_cell2, return_sequences=True, return_state=True, name="dec_rnn2")
-    dec_out2, _, _ = dec_rnn2(dec_out1)
+    # --- fused LSTM decoder with masking, initialized from encoder ---
+    dec_emb = Embedding(
+        vocab_tgt, emb_dim,
+        mask_zero=True,
+        name="dec_emb"
+    )(dec_inputs)
+    dec_out1, _, _ = tf.keras.layers.LSTM(
+        64,
+        return_sequences=True,
+        return_state=True,
+        name="dec_lstm1"
+    )(dec_emb, initial_state=enc_states)
+    dec_out2 = tf.keras.layers.LSTM(
+        64,
+        return_sequences=True,
+        name="dec_lstm2"
+    )(dec_out1)
+
 
     attn = Attention(name="attn_layer")([dec_out2, enc_outs])
     concat = Concatenate(name="concat_layer")([attn, dec_out2])
@@ -130,23 +152,26 @@ class CustomEval(tf.keras.callbacks.Callback):
     def __init__(self, val_ds):
         super().__init__()
         self.val_ds = val_ds
+        # prepare a metric instance
+        self.metric = tf.keras.metrics.SparseCategoricalAccuracy(name="val_token_acc")
 
     def on_epoch_end(self, epoch, logs=None):
-        total = 0
-        correct = 0
-        # iterate over your batched validation set
-        for (enc_in, dec_in), dec_tgt in self.val_ds:
-            # run forward pass (silent)
-            preds = self.model.predict([enc_in, dec_in], verbose=2)
-            # get token‐ids
-            idx_np   = np.argmax(preds, axis=-1)
-            tgt_np   = dec_tgt.numpy()             # <-- convert to NumPy
-            mask     = tgt_np != 0                 # ignore padding=0
-            # count matches only where mask=True
-            correct += np.sum((idx_np == tgt_np) & mask)
-            total   += np.sum(mask)
-        print(f"Validation Token Accuracy: {correct/total:.4f}")
+        # reset state at start of each epoch
+        self.metric.reset_states()
 
+        for (enc_in, dec_in), dec_tgt in self.val_ds:
+            # forward pass without verbosity
+            preds = self.model([enc_in, dec_in], training=False)
+            # preds shape: (batch, seq_len, vocab); dec_tgt: (batch, seq_len)
+            # create a mask: 1 for real tokens, 0 for padding (assumes pad=0)
+            mask = tf.cast(tf.not_equal(dec_tgt, 0), tf.float32)
+            # update the metric
+            # note: metric expects y_true shape (batch, seq_len), y_pred same + last dim vocab
+            self.metric.update_state(dec_tgt, preds, sample_weight=mask)
+
+        # fetch the result
+        acc = self.metric.result().numpy()
+        print(f"Validation Token Accuracy: {acc:.4f}")
 
 def train_model(data_path, epochs=10, batch_size=128, train_from_scratch=False, emb_dim=50):
     inputs, targets = load_training_data(data_path)
