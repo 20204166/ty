@@ -28,7 +28,7 @@ print("Operation result shape:", c.shape)
 os.system("nvidia-smi")
 
 from tensorflow.keras.models import Model, load_model
-from tensorflow.keras.layers import Input, Embedding, Dense, Concatenate, Attention 
+from tensorflow.keras.layers import Input, Embedding, Dense, Concatenate, Attention, Layer
 from tensorflow.keras.preprocessing.text import Tokenizer
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, Callback
@@ -80,6 +80,15 @@ def prepare_decoder_sequences(sequences):
         dec_tgt = np.pad(dec_tgt, ((0, 0), (0, pad_width)), mode='constant')
     return dec_in, dec_tgt
 
+class DotProductAttention(Layer):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.attn = Attention()
+
+    def call(self, inputs):
+        # inputs is [query, value]
+        return self.attn(inputs)
+
 def build_seq2seq_model(vocab_in, vocab_tgt, emb_dim, max_in, max_tgt):
     enc_inputs = Input(shape=(max_in,), name="enc_inputs")
     # --- fused LSTM encoder with masking ---
@@ -122,7 +131,7 @@ def build_seq2seq_model(vocab_in, vocab_tgt, emb_dim, max_in, max_tgt):
     )(dec_out1)
 
 
-    attn = Attention(name="attn_layer")([dec_out2, enc_outs])
+    attn = DotProductAttention(name="attn_layer")([dec_out2, enc_outs])
     concat = Concatenate(name="concat_layer")([attn, dec_out2])
     outputs = Dense(vocab_tgt, activation='softmax', name="decoder_dense")(concat)
 
