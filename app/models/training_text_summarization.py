@@ -28,7 +28,10 @@ print("Operation result shape:", c.shape)
 os.system("nvidia-smi")
 
 from tensorflow.keras.models import Model, load_model
-from tensorflow.keras.layers import Attention, Input, Embedding, Dense, Concatenate, LSTMCell, RNN
+from tensorflow.keras.layers import (
+    Input, Embedding, Dense, Concatenate,
+    LSTMCell, RNN, Attention, Layer
+)
 from tensorflow.keras.preprocessing.text import Tokenizer
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, Callback
@@ -100,45 +103,48 @@ class DotProductAttention(Layer):
 
 
 def build_seq2seq_model(vocab_in, vocab_tgt, emb_dim, max_in, max_tgt):
+    # ENCODER
     enc_inputs = Input(shape=(max_in,), name="enc_inputs")
-    # Encoder
-    enc_inputs = Input(shape=(max_in,), name="enc_inputs")
-    enc_emb = Embedding(vocab_in, emb_dim, mask_zero=True, name="enc_emb")(enc_inputs)
+    enc_emb    = Embedding(vocab_in, emb_dim, mask_zero=True, name="enc_emb")(enc_inputs)
 
-    enc_cell1 = LSTMCell(64, name="enc_cell1")
-    enc_rnn1  = RNN(enc_cell1, return_sequences=True, return_state=True, name="enc_rnn1")
+    # first encoder layer
+    enc_rnn1 = RNN(LSTMCell(64), return_sequences=True, return_state=True, name="enc_rnn1")
     out1, h1, c1 = enc_rnn1(enc_emb)
 
-    enc_cell2 = LSTMCell(64, name="enc_cell2")
-    enc_rnn2  = RNN(enc_cell2, return_sequences=True, return_state=True, name="enc_rnn2")
+    # second encoder layer
+    enc_rnn2 = RNN(LSTMCell(64), return_sequences=True, return_state=True, name="enc_rnn2")
     enc_outs, h2, c2 = enc_rnn2(out1)
     enc_states = [h2, c2]
 
-    # Decoder
+    # DECODER
     dec_inputs = Input(shape=(max_tgt,), name="dec_inputs")
     dec_emb    = Embedding(vocab_tgt, emb_dim, mask_zero=True, name="dec_emb")(dec_inputs)
 
-    dec_cell1 = LSTMCell(64, name="dec_cell1")
-    dec_rnn1  = RNN(dec_cell1, return_sequences=True, return_state=True, name="dec_rnn1")
+    # first decoder layer
+    dec_rnn1 = RNN(LSTMCell(64), return_sequences=True, return_state=True, name="dec_rnn1")
     dec_out1, _, _ = dec_rnn1(dec_emb, initial_state=enc_states)
 
-    dec_cell2 = LSTMCell(64, name="dec_cell2")
-    dec_rnn2  = RNN(dec_cell2, return_sequences=True, return_state=True, name="dec_rnn2")
+    # second decoder layer
+    dec_rnn2 = RNN(LSTMCell(64), return_sequences=True, return_state=True, name="dec_rnn2")
     dec_out2, _, _ = dec_rnn2(dec_out1)
 
-
-    attn = DotProductAttention(name="attn_layer")([dec_out2, enc_outs])
+    # dot‑product attention + concat + dense
+    attn   = DotProductAttention(name="attn_layer")([dec_out2, enc_outs])
     concat = Concatenate(name="concat_layer")([attn, dec_out2])
-    outputs = Dense(vocab_tgt, activation='softmax', name="decoder_dense")(concat)
+    outputs = Dense(vocab_tgt, activation="softmax", name="decoder_dense")(concat)
 
-    model = Model([enc_inputs, dec_inputs], outputs)
+    model = tf.keras.Model([enc_inputs, dec_inputs], outputs)
     lr_sched = tf.keras.optimizers.schedules.ExponentialDecay(
         initial_learning_rate=1e-3,
         decay_steps=20000,
         decay_rate=0.98,
         staircase=True
     )
-    model.compile(Adam(lr_sched), loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+    model.compile(
+        Adam(lr_sched),
+        loss="sparse_categorical_crossentropy",
+        metrics=["accuracy"]
+    )
     return model
 
 def plot_history(hist, save_dir):
