@@ -82,13 +82,21 @@ def prepare_decoder_sequences(sequences):
 
 
 
+
 class DotProductAttention(Layer):
+    supports_masking = True
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.attn = Attention()
 
     def call(self, inputs, mask=None):
+        # inputs = [query, value]; we drop any incoming masks here
         return self.attn(inputs, mask=[None, None])
+
+    def compute_mask(self, inputs, mask=None):
+        # mask is [mask_query, mask_value]; 
+        return mask[0]
 
 
 def build_seq2seq_model(vocab_in, vocab_tgt, emb_dim, max_in, max_tgt):
