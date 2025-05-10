@@ -111,6 +111,7 @@ def build_seq2seq_model(vocab_in, vocab_tgt, emb_dim, max_in, max_tgt):
         64,
         return_sequences=True,
         return_state=True,
+        implementation=1,
         name="enc_lstm1"
     )(enc_emb)
     enc_outs, h2, c2 = tf.keras.layers.LSTM(
@@ -132,6 +133,7 @@ def build_seq2seq_model(vocab_in, vocab_tgt, emb_dim, max_in, max_tgt):
         64,
         return_sequences=True,
         return_state=True,
+        implementation=1,
         name="dec_lstm1"
     )(dec_emb, initial_state=enc_states)
     dec_out2 = tf.keras.layers.LSTM(
