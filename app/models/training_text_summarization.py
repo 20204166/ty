@@ -101,54 +101,30 @@ class DotProductAttention(Layer):
 
 def build_seq2seq_model(vocab_in, vocab_tgt, emb_dim, max_in, max_tgt):
     enc_inputs = Input(shape=(max_in,), name="enc_inputs")
-    enc_emb = Embedding(
-        vocab_in, emb_dim,
-        mask_zero=True,
-        name="enc_emb"
-    )(enc_inputs)
+    # Encoder
+    enc_inputs = Input(shape=(max_in,), name="enc_inputs")
+    enc_emb = Embedding(vocab_in, emb_dim, mask_zero=True, name="enc_emb")(enc_inputs)
 
-    # Encoder LSTM #1 (non‑cuDNN)
-    out1, h1, c1 = tf.keras.layers.LSTM(
-        64,
-        return_sequences=True,
-        return_state=True,
-        use_cudnn_kernel=False,   # ← disable cuDNN here
-        name="enc_lstm1"
-    )(enc_emb)
+    enc_cell1 = LSTMCell(64, name="enc_cell1")
+    enc_rnn1  = RNN(enc_cell1, return_sequences=True, return_state=True, name="enc_rnn1")
+    out1, h1, c1 = enc_rnn1(enc_emb)
 
-    # Encoder LSTM #2 (non‑cuDNN)
-    enc_outs, h2, c2 = tf.keras.layers.LSTM(
-        64,
-        return_sequences=True,
-        return_state=True,
-        use_cudnn_kernel=False,   # ← and here
-        name="enc_lstm2"
-    )(out1)
+    enc_cell2 = LSTMCell(64, name="enc_cell2")
+    enc_rnn2  = RNN(enc_cell2, return_sequences=True, return_state=True, name="enc_rnn2")
+    enc_outs, h2, c2 = enc_rnn2(out1)
     enc_states = [h2, c2]
 
+    # Decoder
     dec_inputs = Input(shape=(max_tgt,), name="dec_inputs")
-    dec_emb = Embedding(
-        vocab_tgt, emb_dim,
-        mask_zero=True,
-        name="dec_emb"
-    )(dec_inputs)
+    dec_emb    = Embedding(vocab_tgt, emb_dim, mask_zero=True, name="dec_emb")(dec_inputs)
 
-    # Decoder LSTM #1 (non‑cuDNN)
-    dec_out1, _, _ = tf.keras.layers.LSTM(
-        64,
-        return_sequences=True,
-        return_state=True,
-        use_cudnn_kernel=False,   # ← disable cuDNN here too
-        name="dec_lstm1"
-    )(dec_emb, initial_state=enc_states)
+    dec_cell1 = LSTMCell(64, name="dec_cell1")
+    dec_rnn1  = RNN(dec_cell1, return_sequences=True, return_state=True, name="dec_rnn1")
+    dec_out1, _, _ = dec_rnn1(dec_emb, initial_state=enc_states)
 
-    # Decoder LSTM #2 (non‑cuDNN)
-    dec_out2 = tf.keras.layers.LSTM(
-        64,
-        return_sequences=True,
-        use_cudnn_kernel=False,   # ← and here
-        name="dec_lstm2"
-    )(dec_out1)
+    dec_cell2 = LSTMCell(64, name="dec_cell2")
+    dec_rnn2  = RNN(dec_cell2, return_sequences=True, return_state=True, name="dec_rnn2")
+    dec_out2, _, _ = dec_rnn2(dec_out1)
 
 
     attn = DotProductAttention(name="attn_layer")([dec_out2, enc_outs])
