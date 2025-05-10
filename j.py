@@ -3,6 +3,7 @@ os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 
 import tensorflow as tf
 
+# 1) Discover and configure GPUs before any TF ops
 gpus = tf.config.list_physical_devices('GPU')
 if gpus:
     try:
@@ -27,7 +28,10 @@ print("Operation result shape:", c.shape)
 os.system("nvidia-smi")
 
 from tensorflow.keras.models import Model, load_model
-from tensorflow.keras.layers import Input, Embedding, Dense, Concatenate, Attention, LSTMCell
+from tensorflow.keras.layers import (
+    Input, Embedding, Dense, Concatenate,
+    LSTMCell, RNN, Attention, Layer
+)
 from tensorflow.keras.preprocessing.text import Tokenizer
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, Callback
@@ -59,6 +63,7 @@ def load_training_data(data_path: str):
 def create_tokenizer(texts, oov_token="<OOV>"):
     tok = Tokenizer(oov_token=oov_token)
     tok.fit_on_texts(texts)
+    tok.num_words = len(tok.word_index) + 1
     return tok
 
 def load_tokenizer(path: str):
@@ -78,38 +83,68 @@ def prepare_decoder_sequences(sequences):
         dec_tgt = np.pad(dec_tgt, ((0, 0), (0, pad_width)), mode='constant')
     return dec_in, dec_tgt
 
+
+
+
+class DotProductAttention(Layer):
+    supports_masking = True
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.attn = Attention()
+
+    def call(self, inputs, mask=None):
+        # inputs = [query, value]; we drop any incoming masks here
+        return self.attn(inputs, mask=[None, None])
+
+    def compute_mask(self, inputs, mask=None):
+        # mask is [mask_query, mask_value]; 
+        return mask[0]
+
+
 def build_seq2seq_model(vocab_in, vocab_tgt, emb_dim, max_in, max_tgt):
+    # ENCODER
     enc_inputs = Input(shape=(max_in,), name="enc_inputs")
-    enc_emb = Embedding(vocab_in, emb_dim, name="enc_emb")(enc_inputs)
-    enc_cell1 = LSTMCell(64, name="enc_cell1")
-    enc_rnn1 = tf.keras.layers.RNN(enc_cell1, return_sequences=True, return_state=True, name="enc_rnn1")
+    enc_emb    = Embedding(vocab_in, emb_dim, mask_zero=True, name="enc_emb")(enc_inputs)
+
+    # first encoder layer
+    enc_rnn1 = RNN(LSTMCell(64), return_sequences=True, return_state=True, name="enc_rnn1")
     out1, h1, c1 = enc_rnn1(enc_emb)
-    enc_cell2 = LSTMCell(64, name="enc_cell2")
-    enc_rnn2 = tf.keras.layers.RNN(enc_cell2, return_sequences=True, return_state=True, name="enc_rnn2")
+
+    # second encoder layer
+    enc_rnn2 = RNN(LSTMCell(64), return_sequences=True, return_state=True, name="enc_rnn2")
     enc_outs, h2, c2 = enc_rnn2(out1)
     enc_states = [h2, c2]
 
+    # DECODER
     dec_inputs = Input(shape=(max_tgt,), name="dec_inputs")
-    dec_emb = Embedding(vocab_tgt, emb_dim, name="dec_emb")(dec_inputs)
-    dec_cell1 = LSTMCell(64, name="dec_cell1")
-    dec_rnn1 = tf.keras.layers.RNN(dec_cell1, return_sequences=True, return_state=True, name="dec_rnn1")
+    dec_emb    = Embedding(vocab_tgt, emb_dim, mask_zero=True, name="dec_emb")(dec_inputs)
+
+    # first decoder layer
+    dec_rnn1 = RNN(LSTMCell(64), return_sequences=True, return_state=True, name="dec_rnn1")
     dec_out1, _, _ = dec_rnn1(dec_emb, initial_state=enc_states)
-    dec_cell2 = LSTMCell(64, name="dec_cell2")
-    dec_rnn2 = tf.keras.layers.RNN(dec_cell2, return_sequences=True, return_state=True, name="dec_rnn2")
+
+    # second decoder layer
+    dec_rnn2 = RNN(LSTMCell(64), return_sequences=True, return_state=True, name="dec_rnn2")
     dec_out2, _, _ = dec_rnn2(dec_out1)
 
-    attn = Attention(name="attn_layer")([dec_out2, enc_outs])
+    # dot‑product attention + concat + dense
+    attn   = DotProductAttention(name="attn_layer")([dec_out2, enc_outs])
     concat = Concatenate(name="concat_layer")([attn, dec_out2])
-    outputs = Dense(vocab_tgt, activation='softmax', name="decoder_dense")(concat)
+    outputs = Dense(vocab_tgt, activation="softmax", name="decoder_dense")(concat)
 
-    model = Model([enc_inputs, dec_inputs], outputs)
+    model = tf.keras.Model([enc_inputs, dec_inputs], outputs)
     lr_sched = tf.keras.optimizers.schedules.ExponentialDecay(
-        initial_learning_rate=0.001,
+        initial_learning_rate=1e-3,
         decay_steps=20000,
         decay_rate=0.98,
         staircase=True
     )
-    model.compile(Adam(lr_sched), loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+    model.compile(
+        Adam(lr_sched),
+        loss="sparse_categorical_crossentropy",
+        metrics=["accuracy"]
+    )
     return model
 
 def plot_history(hist, save_dir):
@@ -149,9 +184,8 @@ class CustomEval(tf.keras.callbacks.Callback):
         acc = self.metric.result().numpy()
         print(f"Validation Token Accuracy: {acc:.4f}")
 
-def train_model(data_path, epochs=10, batch_size=64, emb_dim=50,train_from_scratch = False):
+def train_model(data_path, epochs=10, batch_size=128, train_from_scratch=False, emb_dim=50):
     inputs, targets = load_training_data(data_path)
-    split = int(0.9 * len(inputs))
     save_dir     = "app/models/saved_model"
     tok_in_path  = f"{save_dir}/tokenizer_input.json"
     tok_tgt_path = f"{save_dir}/tokenizer_target.json"
@@ -178,12 +212,11 @@ def train_model(data_path, epochs=10, batch_size=64, emb_dim=50,train_from_scrat
         with open(tok_tgt_path, 'w', encoding='utf-8') as f:
             f.write(tok_tgt.to_json())
 
-    vs_in = len(tok_in.word_index) + 1
+    vs_in  = len(tok_in.word_index) + 1
     vs_tgt = len(tok_tgt.word_index) + 1
 
     from tensorflow.keras import mixed_precision
     mixed_precision.set_global_policy('mixed_float16')
-
 
     train_enc = preprocess_texts(train_in, tok_in, max_length_input)
     train_dec = preprocess_texts(train_tgt, tok_tgt, max_length_target)
@@ -193,24 +226,18 @@ def train_model(data_path, epochs=10, batch_size=64, emb_dim=50,train_from_scrat
     val_dec = preprocess_texts(val_tgt, tok_tgt, max_length_target)
     val_dec_in, val_dec_tgt = prepare_decoder_sequences(val_dec)
 
-    train_ds = (
-        tf.data.Dataset
-          .from_tensor_slices(((train_enc, train_dec_in), train_dec_tgt))
-          .shuffle(1000)
-          .cache()
-          .batch(batch_size)
-          .map(lambda x, y: (x, y), num_parallel_calls=tf.data.AUTOTUNE)
-          .prefetch(tf.data.AUTOTUNE)
-    )
 
-    val_ds = (
-        tf.data.Dataset
-          .from_tensor_slices(((val_enc, val_dec_in), val_dec_tgt))
-          .cache()
-          .batch(batch_size)
-          .prefetch(tf.data.AUTOTUNE)
-    )
-
+    train_ds = (tf.data.Dataset.from_tensor_slices(((train_enc, train_dec_in), train_dec_tgt))
+                .shuffle(1000)
+                .cache()  
+                .batch(batch_size)
+                .map(lambda x, y: (x, y), num_parallel_calls=tf.data.AUTOTUNE)
+                .prefetch(tf.data.AUTOTUNE))
+    val_ds = (tf.data.Dataset.from_tensor_slices(((val_enc, val_dec_in), val_dec_tgt))
+              .cache()
+              .batch(batch_size)
+              .prefetch(tf.data.AUTOTUNE))
+    
     strategy = tf.distribute.MirroredStrategy()
     
     with strategy.scope():
