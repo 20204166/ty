@@ -115,16 +115,51 @@ def build_seq2seq_model(vocab_in, vocab_tgt, emb_dim, max_in, max_tgt):
     return model
 
 def plot_history(hist, save_dir):
+    import os
+    import matplotlib.pyplot as plt
+
     epochs = range(1, len(hist.history['loss']) + 1)
-    plt.figure(figsize=(12, 5))
-    plt.plot(epochs, hist.history['loss'], 'bo-', label='Loss')
-    plt.plot(epochs, hist.history['accuracy'], 'go-', label='Accuracy')
-    plt.title('Training Metrics')
-    plt.xlabel('Epochs')
+
+    
+    plt.figure()
+    plt.plot(epochs, hist.history['loss'],         label='Train loss')
+    plt.plot(epochs, hist.history['val_loss'],     label='Val loss')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.title('Training and Validation Loss')
     plt.legend()
-    out_path = os.path.join(save_dir, "training_progress.png")
-    plt.savefig(out_path)
-    print(f"Saved plot to {out_path}")
+    loss_path = os.path.join(save_dir, 'loss_curve.png')
+    plt.savefig(loss_path)
+    plt.close()
+
+    
+    plt.figure()
+    plt.plot(epochs, hist.history['accuracy'],     label='Train accuracy')
+    plt.plot(epochs, hist.history['val_accuracy'], label='Val accuracy')
+    plt.xlabel('Epoch')
+    plt.ylabel('Accuracy')
+    plt.title('Training and Validation Accuracy')
+    plt.legend()
+    acc_path = os.path.join(save_dir, 'accuracy_curve.png')
+    plt.savefig(acc_path)
+    plt.close()
+
+    if 'val_token_acc' in hist.history:
+        plt.figure()
+        plt.plot(epochs, hist.history['val_token_acc'], label='Val token accuracy')
+        plt.xlabel('Epoch')
+        plt.ylabel('Token Accuracy')
+        plt.title('Validation Token Accuracy')
+        plt.legend()
+        tok_path = os.path.join(save_dir, 'token_accuracy_curve.png')
+        plt.savefig(tok_path)
+        plt.close()
+
+    print(f"Saved plots to {save_dir}:",
+          os.path.basename(loss_path),
+          os.path.basename(acc_path),
+          *(os.path.basename(tok_path) if 'tok_path' in locals() else []))
+
 
 class ResourceMonitor(Callback):
     def __init__(self, total_epochs, save_dir):
