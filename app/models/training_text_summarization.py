@@ -412,7 +412,7 @@ def train_model(data_path, epochs=20, batch_size=192, emb_dim=50, train_from_scr
           .batch(batch_size)
           .map(lambda x, y: (x, y), num_parallel_calls=tf.data.AUTOTUNE)
           .prefetch(tf.data.AUTOTUNE)
-          .apply(tf.data.experimental.prefetch_to_device('/GPU:0'))
+
     )
 
     val_ds = (
