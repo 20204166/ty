@@ -32,7 +32,7 @@ from tensorflow.keras.preprocessing.text import Tokenizer
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, Callback
 from tensorflow.keras.optimizers import Adam
-
+from tensorflow.keras.utils import plot_model
 import json
 import numpy as np
 import matplotlib.pyplot as plt
@@ -123,7 +123,36 @@ def plot_history(hist, save_dir):
     out_path = os.path.join(save_dir, "training_progress.png")
     plt.savefig(out_path)
     print(f"Saved plot to {out_path}")
+
+class SaveOnAnyImprovement(Callback):
+    def __init__(self, filepath):
+        super().__init__()
+        self.filepath = filepath
+        self.best = {}
     
+    def on_epoch_end(self, epoch, logs=None):
+        logs = logs or {}
+        any_improved = False
+        improvements = []
+
+        for name, value in logs.items():
+            if not name.startswith("val_"):
+                continue
+            # smaller-is-better for losses, larger-is-better otherwise
+            is_loss = name.endswith("loss")
+            best_val = self.best.get(name, np.Inf if is_loss else -np.Inf)
+
+            if (is_loss and value < best_val) or (not is_loss and value > best_val):
+                self.best[name] = value
+                any_improved = True
+                arrow = "↓" if is_loss else "↑"
+                improvements.append(f"{name} {arrow} {value:.4f}")
+
+        if any_improved:
+            self.model.save(self.filepath)
+            print(f"✔️ Saved model at epoch {epoch+1} because " +
+                  ", ".join(improvements))
+
 class CustomEval(tf.keras.callbacks.Callback):
     def __init__(self, val_ds):
         super().__init__()
@@ -219,9 +248,10 @@ def train_model(data_path, epochs=10, batch_size=64, emb_dim=50,train_from_scrat
         # b) (Re)define callbacks inside scope
         callbacks = [
             EarlyStopping(monitor='loss', patience=3, restore_best_weights=True),
-            ModelCheckpoint(model_path, save_best_only=True, verbose=2),
+            SaveOnAnyImprovement(model_path),
             CustomEval(val_ds)
         ]
+
 
         # c) Train—this will now shard batches across your GPUs
         history = model.fit(
