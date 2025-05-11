@@ -32,7 +32,8 @@ from tensorflow.keras.preprocessing.text import Tokenizer
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, Callback
 from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.utils import plot_model
+from tensorflow.keras.utils import plot_model   
+from rouge_score import rouge_scorer
 import psutil
 import subprocess
 import json
@@ -120,46 +121,114 @@ def plot_history(hist, save_dir):
 
     epochs = range(1, len(hist.history['loss']) + 1)
 
-    
+    # ── 1) Loss curve ──
     plt.figure()
-    plt.plot(epochs, hist.history['loss'],         label='Train loss')
-    plt.plot(epochs, hist.history['val_loss'],     label='Val loss')
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
+    plt.plot(epochs, hist.history['loss'],     label='Train loss')
+    plt.plot(epochs, hist.history['val_loss'], label='Val loss')
+    plt.xlabel('Epoch'); plt.ylabel('Loss')
     plt.title('Training and Validation Loss')
     plt.legend()
     loss_path = os.path.join(save_dir, 'loss_curve.png')
     plt.savefig(loss_path)
     plt.close()
 
-    
+    # ── 2) Accuracy curve ──
     plt.figure()
-    plt.plot(epochs, hist.history['accuracy'],     label='Train accuracy')
-    plt.plot(epochs, hist.history['val_accuracy'], label='Val accuracy')
-    plt.xlabel('Epoch')
-    plt.ylabel('Accuracy')
+    plt.plot(epochs, hist.history['accuracy'],     label='Train acc')
+    plt.plot(epochs, hist.history['val_accuracy'], label='Val acc')
+    plt.xlabel('Epoch'); plt.ylabel('Accuracy')
     plt.title('Training and Validation Accuracy')
     plt.legend()
     acc_path = os.path.join(save_dir, 'accuracy_curve.png')
     plt.savefig(acc_path)
     plt.close()
 
+    # ── 3) Token‐accuracy curve ──
     if 'val_token_acc' in hist.history:
         plt.figure()
-        plt.plot(epochs, hist.history['val_token_acc'], label='Val token accuracy')
-        plt.xlabel('Epoch')
-        plt.ylabel('Token Accuracy')
+        plt.plot(epochs, hist.history['val_token_acc'], label='Val token acc')
+        plt.xlabel('Epoch'); plt.ylabel('Token Accuracy')
         plt.title('Validation Token Accuracy')
         plt.legend()
         tok_path = os.path.join(save_dir, 'token_accuracy_curve.png')
         plt.savefig(tok_path)
         plt.close()
 
-    print(f"Saved plots to {save_dir}:",
+    # ── 4) ROUGE curves ──
+    if 'val_rouge1' in hist.history:
+        plt.figure()
+        plt.plot(epochs, hist.history['val_rouge1'], label='ROUGE-1 F1')
+        plt.plot(epochs, hist.history['val_rouge2'], label='ROUGE-2 F1')
+        plt.plot(epochs, hist.history['val_rougeL'], label='ROUGE-L F1')
+        plt.xlabel('Epoch'); plt.ylabel('F1 Score')
+        plt.title('Validation ROUGE Scores')
+        plt.legend()
+        rouge_path = os.path.join(save_dir, 'rouge_curve.png')
+        plt.savefig(rouge_path)
+        plt.close()
+
+    print("Saved plots to", save_dir,
           os.path.basename(loss_path),
           os.path.basename(acc_path),
-          *(os.path.basename(tok_path) if 'tok_path' in locals() else []))
+          *(os.path.basename(tok_path) if 'tok_path' in locals() else []),
+          *(os.path.basename(rouge_path) if 'rouge_path' in locals() else []))
 
+class RougeCallback(Callback):
+    def __init__(self, val_ds, tgt_tokenizer, max_length_target, n_samples=100):
+        super().__init__()
+        self.val_ds     = val_ds
+        self.tokenizer  = tgt_tokenizer
+        self.max_length = max_length_target
+        self.scorer     = rouge_scorer.RougeScorer(
+            ['rouge1','rouge2','rougeL'], use_stemmer=True
+        )
+        self.n_samples  = n_samples
+
+    def on_epoch_end(self, epoch, logs=None):
+        logs = logs or {}
+        total = {'rouge1':0, 'rouge2':0, 'rougeL':0}
+        count = 0
+
+        for (enc, _), dec_tgt in self.val_ds.take(self.n_samples):
+            # --- greedy decode to `preds` exactly as before ---
+            batch = tf.shape(enc)[0]
+            dec_input = tf.fill([batch,1], self.tokenizer.word_index['<start>'])
+            result    = tf.zeros([batch,0], dtype=tf.int32)
+
+            for t in range(self.max_length):
+                logits     = self.model([enc, dec_input], training=False)
+                next_token = tf.argmax(logits[:, -1, :], axis=-1)
+                result     = tf.concat([result, next_token[:,None]], axis=1)
+                dec_input  = tf.concat([dec_input, next_token[:,None]], axis=1)
+
+            # --- stringify and score ---
+            for ref_seq, pred_seq in zip(dec_tgt.numpy(), result.numpy()):
+                # strip pad/<start>/<end>
+                def clean(seq):
+                    return [w for w in seq if w>0 and 
+                            w!=self.tokenizer.word_index['<start>'] and
+                            w!=self.tokenizer.word_index['<end>']]
+                ref_txt  = " ".join(self.tokenizer.index_word[w] for w in clean(ref_seq))
+                pred_txt = " ".join(self.tokenizer.index_word.get(w,"") for w in clean(pred_seq))
+
+                sc = self.scorer.score(ref_txt, pred_txt)
+                for k in total:
+                    total[k] += sc[k].fmeasure
+                count += 1
+
+        # compute averages
+        avg = {k: float(v/count) for k,v in total.items()}
+
+        # **inject into logs** so SaveOnAnyImprovement can see them
+        logs['val_rouge1'] = avg['rouge1']
+        logs['val_rouge2'] = avg['rouge2']
+        logs['val_rougeL'] = avg['rougeL']
+
+        # and print for yourself
+        print(f"Epoch {epoch+1}: " +
+              f"ROUGE-1 {avg['rouge1']:.4f}, " +
+              f"ROUGE-2 {avg['rouge2']:.4f}, " +
+              f"ROUGE-L {avg['rougeL']:.4f}")
 
 class ResourceMonitor(Callback):
     def __init__(self, total_epochs, save_dir):
@@ -368,13 +437,22 @@ def train_model(data_path, epochs=20, batch_size=96, emb_dim=50,train_from_scrat
 
         total_epochs = epochs
         resource_cb = ResourceMonitor(total_epochs, save_dir)
-
+        
+        rouge_cb = RougeCallback(val_ds, tok_tgt, max_length_target, n_samples=50)
+        save_cb  = SaveOnAnyImprovement(model_path)
         # b) (Re)define callbacks inside scope
         callbacks = [
-            EarlyStopping(monitor='val_accuracy', patience=3, mode='max', restore_best_weights=True),
-            SaveOnAnyImprovement(model_path),
-            CustomEval(val_ds),
-            resource_cb
+            EarlyStopping(
+                monitor='val_accuracy',
+                mode='max',
+                patience=3,
+                restore_best_weights=True,
+                verbose=1
+                ),
+                rouge_cb,
+                save_cb,
+                CustomEval(val_ds),
+                resource_cb,
         ]
 
 
