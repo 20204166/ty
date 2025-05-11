@@ -106,13 +106,12 @@ def build_seq2seq_model(vocab_in, vocab_tgt, emb_dim, max_in, max_tgt):
     outputs = Dense(vocab_tgt, activation='softmax', name="decoder_dense")(concat)
 
     model = Model([enc_inputs, dec_inputs], outputs)
-    lr_sched = tf.keras.optimizers.schedules.ExponentialDecay(
-        initial_learning_rate=0.001,
-        decay_steps=20000,
-        decay_rate=0.98,
-        staircase=True
-    )
-    model.compile(Adam(lr_sched), loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+    model.compile(
+        Adam(learning_rate=1e-3),
+        loss='sparse_categorical_crossentropy',
+        metrics=['accuracy']
+        )
+
     return model
 
 def plot_history(hist, save_dir):
@@ -316,7 +315,7 @@ class SaveOnAnyImprovement(Callback):
         improvements = []
 
         for name, value in logs.items():
-            if not name.startswith("val_"):
+            if not name.startswith("val_rouge1"):
                 continue
             # smaller-is-better for losses, larger-is-better otherwise
             is_loss = name.endswith("loss")
@@ -361,7 +360,7 @@ class CustomEval(tf.keras.callbacks.Callback):
         print(f"Validation Token Accuracy: {acc:.4f}")
         logs['val_token_acc'] = acc
 
-def train_model(data_path, epochs=20, batch_size=96, emb_dim=50,train_from_scratch = False):
+def train_model(data_path, epochs=20, batch_size=128, emb_dim=50, train_from_scratch = False):
     inputs, targets = load_training_data(data_path)
     split = int(0.9 * len(inputs))
     save_dir     = "app/models/saved_model"
