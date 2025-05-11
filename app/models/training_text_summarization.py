@@ -33,6 +33,8 @@ from tensorflow.keras.preprocessing.sequence import pad_sequences
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, Callback
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.utils import plot_model
+import psutil
+import subprocess
 import json
 import numpy as np
 import matplotlib.pyplot as plt
@@ -123,6 +125,60 @@ def plot_history(hist, save_dir):
     out_path = os.path.join(save_dir, "training_progress.png")
     plt.savefig(out_path)
     print(f"Saved plot to {out_path}")
+
+class ResourceMonitor(Callback):
+    def __init__(self, total_epochs, save_dir):
+        super().__init__()
+        self.total_epochs = total_epochs
+        self.save_dir = save_dir
+        self.cpu_usage = []
+        self.ram_usage = []
+        self.gpu_usage = []
+
+    def on_epoch_end(self, epoch, logs=None):
+        # 1) sample usages
+        cpu = psutil.cpu_percent(interval=None)
+        ram = psutil.virtual_memory().percent
+
+        # 2) call nvidia-smi for GPU util (single-GPU example)
+        try:
+            out = subprocess.check_output(
+                ["nvidia-smi", "--query-gpu=utilization.gpu", "--format=csv,noheader,nounits"]
+            )
+            gpu = float(out.decode("utf-8").strip().split("\n")[0])
+        except Exception:
+            gpu = 0.0
+
+        self.cpu_usage.append(cpu)
+        self.ram_usage.append(ram)
+        self.gpu_usage.append(gpu)
+
+        print(f"Resources after epoch {epoch+1}: CPU {cpu:.1f}%, RAM {ram:.1f}%, GPU {gpu:.1f}%")
+
+        # 3) if this was the last epoch, plot & save
+        if (epoch + 1) == self.total_epochs:
+            fig, axes = plt.subplots(3, 1, figsize=(8, 12))
+            
+            axes[0].plot(range(1, self.total_epochs+1), self.cpu_usage, marker='o')
+            axes[0].set_title("CPU Usage (%)")
+            axes[0].set_xlabel("Epoch")
+            axes[0].set_ylabel("CPU %")
+            
+            axes[1].plot(range(1, self.total_epochs+1), self.ram_usage, marker='o')
+            axes[1].set_title("RAM Usage (%)")
+            axes[1].set_xlabel("Epoch")
+            axes[1].set_ylabel("RAM %")
+            
+            axes[2].plot(range(1, self.total_epochs+1), self.gpu_usage, marker='o')
+            axes[2].set_title("GPU Usage (%)")
+            axes[2].set_xlabel("Epoch")
+            axes[2].set_ylabel("GPU %")
+            
+            plt.tight_layout()
+            out_path = os.path.join(self.save_dir, "resource_usage.png")
+            plt.savefig(out_path)
+            print(f"Saved resource usage plot to {out_path}")
+            plt.close(fig)
 
 class SaveOnAnyImprovement(Callback):
     def __init__(self, filepath):
@@ -255,11 +311,15 @@ def train_model(data_path, epochs=20, batch_size=96, emb_dim=50,train_from_scrat
                 max_length_input, max_length_target
             )
 
+        total_epochs = epochs
+        resource_cb = ResourceMonitor(total_epochs, save_dir)
+
         # b) (Re)define callbacks inside scope
         callbacks = [
             EarlyStopping(monitor='loss', patience=3, restore_best_weights=True),
             SaveOnAnyImprovement(model_path),
-            CustomEval(val_ds)
+            CustomEval(val_ds),
+            resource_cb
         ]
 
 
