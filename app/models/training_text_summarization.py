@@ -201,12 +201,11 @@ class RougeCallback(Callback):
             # --- greedy decode to `preds` exactly as before ---
             batch = tf.shape(enc)[0]
             dec_input = tf.fill([batch,1], self.start_id)
-            result = tf.zeros([batch, 0], dtype=tf.int64)
-
+            result    = tf.zeros([batch,0], dtype=tf.int32)
 
             for t in range(self.max_length):
                 logits     = self.model([enc, dec_input], training=False)
-                next_token = tf.argmax(logits[:, -1, :], axis=-1)
+                next_token = tf.cast(tf.argmax(logits[:, -1, :], axis=-1), tf.int32)
                 result     = tf.concat([result, next_token[:,None]], axis=1)
                 dec_input  = tf.concat([dec_input, next_token[:,None]], axis=1)
 
