@@ -160,9 +160,18 @@ class CustomEval(tf.keras.callbacks.Callback):
         self.metric = tf.keras.metrics.SparseCategoricalAccuracy(name="val_token_acc")
 
     def on_epoch_end(self, epoch, logs=None):
-        # reset state at start of each epoch
-        self.metric.reset_state()      # <-- use reset_state(), not reset_states()
-
+        logs = logs or {}
+        
+        train_loss = logs.get("loss")
+        train_acc  = logs.get("accuracy")
+        val_loss   = logs.get("val_loss")
+        val_acc    = logs.get("val_accuracy")
+        print(
+            f"Epoch {epoch+1:>2} — "
+            f"loss: {train_loss:.4f}, acc: {train_acc:.4f} | "
+            f"val_loss: {val_loss:.4f}, val_acc: {val_acc:.4f}"
+        )
+        self.metric.reset_state()     
         for (enc_in, dec_in), dec_tgt in self.val_ds:
             preds = self.model([enc_in, dec_in], training=False)
             mask = tf.cast(tf.not_equal(dec_tgt, 0), tf.float32)
@@ -170,6 +179,7 @@ class CustomEval(tf.keras.callbacks.Callback):
 
         acc = self.metric.result().numpy()
         print(f"Validation Token Accuracy: {acc:.4f}")
+        logs['val_token_acc'] = acc
 
 def train_model(data_path, epochs=10, batch_size=64, emb_dim=50,train_from_scratch = False):
     inputs, targets = load_training_data(data_path)
