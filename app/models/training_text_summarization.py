@@ -371,7 +371,7 @@ def train_model(data_path, epochs=20, batch_size=96, emb_dim=50,train_from_scrat
 
         # b) (Re)define callbacks inside scope
         callbacks = [
-            EarlyStopping(monitor='loss', patience=3, restore_best_weights=True),
+            EarlyStopping(monitor='val_accuracy', patience=3, mode='max', restore_best_weights=True),
             SaveOnAnyImprovement(model_path),
             CustomEval(val_ds),
             resource_cb
