@@ -130,50 +130,70 @@ class ResourceMonitor(Callback):
     def __init__(self, total_epochs, save_dir):
         super().__init__()
         self.total_epochs = total_epochs
-        self.save_dir = save_dir
-        self.cpu_usage = []
-        self.ram_usage = []
-        self.gpu_usage = []
+        self.save_dir     = save_dir
+        self.cpu_usage    = []
+        self.ram_usage    = []
+        
+        self.gpu_usage    = {}  
+
+    def _get_gpu_utils(self):
+        """Returns a list of floats, one per GPU device."""
+        try:
+            raw = subprocess.check_output([
+                "nvidia-smi",
+                "--query-gpu=utilization.gpu",
+                "--format=csv,noheader,nounits"
+            ])
+            lines = raw.decode("utf-8").strip().splitlines()
+            # parse each line into a float
+            vals  = [float(l) for l in lines if l.strip()]
+            return vals
+        except Exception:
+            return []
 
     def on_epoch_end(self, epoch, logs=None):
-        # 1) sample usages
         cpu = psutil.cpu_percent(interval=None)
         ram = psutil.virtual_memory().percent
-
-        # 2) call nvidia-smi for GPU util (single-GPU example)
-        try:
-            out = subprocess.check_output(
-                ["nvidia-smi", "--query-gpu=utilization.gpu", "--format=csv,noheader,nounits"]
-            )
-            gpu = float(out.decode("utf-8").strip().split("\n")[0])
-        except Exception:
-            gpu = 0.0
-
         self.cpu_usage.append(cpu)
         self.ram_usage.append(ram)
-        self.gpu_usage.append(gpu)
 
-        print(f"Resources after epoch {epoch+1}: CPU {cpu:.1f}%, RAM {ram:.1f}%, GPU {gpu:.1f}%")
+        gpu_vals = self._get_gpu_utils()
+        # record each GPU’s util; initialize lists if first epoch
+        for i, u in enumerate(gpu_vals):
+            self.gpu_usage.setdefault(i, []).append(u)
 
-        # 3) if this was the last epoch, plot & save
+        # for display, you might print per-GPU or an average:
+        if gpu_vals:
+            avg_gpu = sum(gpu_vals) / len(gpu_vals)
+            gpu_str = ", ".join(f"GPU{i}={u:.1f}%" for i,u in enumerate(gpu_vals))
+        else:
+            avg_gpu = 0.0
+            gpu_str = "no-GPU"
+        print(f"Epoch {epoch+1}: CPU {cpu:.1f}%  RAM {ram:.1f}%  {gpu_str}")
+
+        # only plot & save at the final epoch
         if (epoch + 1) == self.total_epochs:
-            fig, axes = plt.subplots(3, 1, figsize=(8, 12))
+            fig, axes = plt.subplots(2 + len(gpu_vals), 1, figsize=(8, 4*(2+len(gpu_vals))))
             
+            # CPU
             axes[0].plot(range(1, self.total_epochs+1), self.cpu_usage, marker='o')
             axes[0].set_title("CPU Usage (%)")
-            axes[0].set_xlabel("Epoch")
             axes[0].set_ylabel("CPU %")
             
+            # RAM
             axes[1].plot(range(1, self.total_epochs+1), self.ram_usage, marker='o')
             axes[1].set_title("RAM Usage (%)")
-            axes[1].set_xlabel("Epoch")
             axes[1].set_ylabel("RAM %")
+
+            # one subplot per GPU
+            for i in range(len(gpu_vals)):
+                axes[2+i].plot(range(1, self.total_epochs+1),
+                               self.gpu_usage[i], marker='o')
+                axes[2+i].set_title(f"GPU {i} Usage (%)")
+                axes[2+i].set_ylabel("GPU %")
             
-            axes[2].plot(range(1, self.total_epochs+1), self.gpu_usage, marker='o')
-            axes[2].set_title("GPU Usage (%)")
-            axes[2].set_xlabel("Epoch")
-            axes[2].set_ylabel("GPU %")
-            
+            for ax in axes:
+                ax.set_xlabel("Epoch")
             plt.tight_layout()
             out_path = os.path.join(self.save_dir, "resource_usage.png")
             plt.savefig(out_path)
