@@ -161,7 +161,7 @@ class CustomEval(tf.keras.callbacks.Callback):
 
     def on_epoch_end(self, epoch, logs=None):
         logs = logs or {}
-        
+
         train_loss = logs.get("loss")
         train_acc  = logs.get("accuracy")
         val_loss   = logs.get("val_loss")
@@ -181,7 +181,7 @@ class CustomEval(tf.keras.callbacks.Callback):
         print(f"Validation Token Accuracy: {acc:.4f}")
         logs['val_token_acc'] = acc
 
-def train_model(data_path, epochs=10, batch_size=64, emb_dim=50,train_from_scratch = False):
+def train_model(data_path, epochs=20, batch_size=96, emb_dim=50,train_from_scratch = False):
     inputs, targets = load_training_data(data_path)
     split = int(0.9 * len(inputs))
     save_dir     = "app/models/saved_model"
