@@ -183,6 +183,8 @@ class RougeCallback(Callback):
         super().__init__()
         self.val_ds     = val_ds
         self.tokenizer  = tgt_tokenizer
+        self.start_id   = tgt_tokenizer.word_index.get('<start>', tgt_tokenizer.word_index.get(tgt_tokenizer.oov_token))
+        self.end_id     = tgt_tokenizer.word_index.get('<end>',   tgt_tokenizer.word_index.get(tgt_tokenizer.oov_token))
         self.max_length = max_length_target
         self.scorer     = rouge_scorer.RougeScorer(
             ['rouge1','rouge2','rougeL'], use_stemmer=True
@@ -193,11 +195,12 @@ class RougeCallback(Callback):
         logs = logs or {}
         total = {'rouge1':0, 'rouge2':0, 'rougeL':0}
         count = 0
+        
 
         for (enc, _), dec_tgt in self.val_ds.take(self.n_samples):
             # --- greedy decode to `preds` exactly as before ---
             batch = tf.shape(enc)[0]
-            dec_input = tf.fill([batch,1], self.tokenizer.word_index['<start>'])
+            dec_input = tf.fill([batch,1], self.start_id)
             result    = tf.zeros([batch,0], dtype=tf.int32)
 
             for t in range(self.max_length):
@@ -210,9 +213,9 @@ class RougeCallback(Callback):
             for ref_seq, pred_seq in zip(dec_tgt.numpy(), result.numpy()):
                 # strip pad/<start>/<end>
                 def clean(seq):
-                    return [w for w in seq if w>0 and 
-                            w!=self.tokenizer.word_index['<start>'] and
-                            w!=self.tokenizer.word_index['<end>']]
+                    return [w for w in seq if w>0
+                            and w != self.start_id
+                            and w != self.end_id]
                 ref_txt  = " ".join(self.tokenizer.index_word[w] for w in clean(ref_seq))
                 pred_txt = " ".join(self.tokenizer.index_word.get(w,"") for w in clean(pred_seq))
 
@@ -223,7 +226,7 @@ class RougeCallback(Callback):
 
         # compute averages
         avg = {k: float(v/count) for k,v in total.items()}
-
+        
         # **inject into logs** so SaveOnAnyImprovement can see them
         logs['val_rouge1'] = avg['rouge1']
         logs['val_rouge2'] = avg['rouge2']
