@@ -30,7 +30,7 @@ from tensorflow.keras.models import Model, load_model
 from tensorflow.keras.layers import Input, Embedding, Dense, Concatenate, Attention, LSTMCell
 from tensorflow.keras.preprocessing.text import Tokenizer
 from tensorflow.keras.preprocessing.sequence import pad_sequences
-from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, Callback
+from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, Callback, ReduceLROnPlateau
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.utils import plot_model   
 from rouge_score import rouge_scorer
@@ -106,8 +106,14 @@ def build_seq2seq_model(vocab_in, vocab_tgt, emb_dim, max_in, max_tgt):
     outputs = Dense(vocab_tgt, activation='softmax', name="decoder_dense")(concat)
 
     model = Model([enc_inputs, dec_inputs], outputs)
+    lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
+        initial_learning_rate=1e-3,
+        decay_steps=20000,
+        decay_rate=0.98,
+        staircase=True
+    )
     model.compile(
-        Adam(learning_rate=1e-3),
+        Adam(learning_rate=lr_schedule),
         loss='sparse_categorical_crossentropy',
         metrics=['accuracy']
         )
@@ -440,6 +446,13 @@ def train_model(data_path, epochs=20, batch_size=192, emb_dim=50, train_from_scr
         
         rouge_cb = RougeCallback(val_ds, tok_tgt, max_length_target, n_samples=50)
         save_cb  = SaveOnAnyImprovement(model_path)
+        reduce_lr = ReduceLROnPlateau(
+            monitor='val_loss',
+            factor=0.5,
+            patience=2,
+            min_lr=1e-5,
+            verbose=1
+            )
         # b) (Re)define callbacks inside scope
         callbacks = [
             EarlyStopping(
@@ -453,6 +466,7 @@ def train_model(data_path, epochs=20, batch_size=192, emb_dim=50, train_from_scr
                 save_cb,
                 CustomEval(val_ds),
                 resource_cb,
+                reduce_lr
         ]
 
 
