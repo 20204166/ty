@@ -371,7 +371,7 @@ class CustomEval(tf.keras.callbacks.Callback):
         print(f"Validation Token Accuracy: {acc:.4f}")
         logs['val_token_acc'] = acc
 
-def train_model(data_path, epochs=25, batch_size=160, emb_dim=50, train_from_scratch = False):
+def train_model(data_path, epochs=25, batch_size=160, emb_dim=50, train_from_scratch = True):
     inputs, targets = load_training_data(data_path)
     split = int(0.9 * len(inputs))
     save_dir     = "app/models/saved_model"
