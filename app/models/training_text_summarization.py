@@ -39,7 +39,7 @@ import json
 import numpy as np
 import matplotlib.pyplot as plt
 
-tf.config.optimizer.set_jit(True)
+
 
 
 max_length_input = 50
