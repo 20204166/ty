@@ -502,7 +502,7 @@ def train_model(data_path, epochs=90, batch_size=35, emb_dim=50, train_from_scra
           .from_tensor_slices(((train_enc, train_dec_in), train_dec_tgt))
           .shuffle(1000)
           .cache()
-          .batch(batch_size)
+          .batch(batch_size, drop_remainder=True) 
           .map(lambda x, y: (x, y), num_parallel_calls=tf.data.AUTOTUNE)
           .prefetch(tf.data.AUTOTUNE)
 
@@ -511,7 +511,7 @@ def train_model(data_path, epochs=90, batch_size=35, emb_dim=50, train_from_scra
     val_ds = (
         tf.data.Dataset
           .from_tensor_slices(((val_enc, val_dec_in), val_dec_tgt))
-          .batch(batch_size)
+          .batch(batch_size, drop_remainder=True) 
           .prefetch(tf.data.AUTOTUNE)
     )
     n_rouge = 10
@@ -520,7 +520,7 @@ def train_model(data_path, epochs=90, batch_size=35, emb_dim=50, train_from_scra
           .take(n_rouge)   
           .cache()         
           .repeat()        
-          .batch(batch_size)
+          .batch(batch_size, drop_remainder=True) 
           .prefetch(tf.data.AUTOTUNE)
     )
 
