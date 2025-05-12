@@ -381,8 +381,7 @@ def train_model(data_path, epochs=25, batch_size=128, emb_dim=50, train_from_scr
     model_path   = f"{save_dir}/summarization_model.keras"
     
     os.makedirs(save_dir, exist_ok=True)
-    MAX_VOCAB = 10_000
-
+    
     train_in, train_tgt = inputs[:split], targets[:split]
     val_in, val_tgt = inputs[split:], targets[split:]
 
