@@ -116,9 +116,8 @@ def build_seq2seq_model(vocab_in, vocab_tgt, emb_dim, max_in, max_tgt):
     model.compile(
         Adam(learning_rate=lr_schedule),
         loss='sparse_categorical_crossentropy',
-        metrics=['accuracy']
-        )
-
+        metrics=['accuracy', tf.keras.metrics.SparseCategoricalAccuracy(name='token_accuracy')]
+    )
     return model
 
 def plot_history(hist, save_dir):
@@ -315,25 +314,30 @@ class ResourceMonitor(Callback):
             print(f"Saved resource usage plot to {out_path}")
             plt.close(fig)
 
-class SaveOnAnyImprovement(Callback):
+class SaveOnAnyImprovement(tf.keras.callbacks.Callback):
     def __init__(self, filepath):
         super().__init__()
         self.filepath = filepath
+        # we'll keep track of the best seen for each monitored metric
         self.best = {}
-    
+
     def on_epoch_end(self, epoch, logs=None):
         logs = logs or {}
         any_improved = False
         improvements = []
 
+        # scan through all logged metrics
         for name, value in logs.items():
-            if not name.startswith("val_rouge1"):
+            # only consider validation metrics here
+            if not name.startswith("val_"):
                 continue
-            # smaller-is-better for losses, larger-is-better otherwise
+
+            # decide if higher-is-better or lower-is-better
             is_loss = name.endswith("loss")
             best_val = self.best.get(name, np.Inf if is_loss else -np.Inf)
 
-            if (is_loss and value < best_val) or (not is_loss and value > best_val):
+            improved = (value < best_val) if is_loss else (value > best_val)
+            if improved:
                 self.best[name] = value
                 any_improved = True
                 arrow = "↓" if is_loss else "↑"
@@ -341,38 +345,42 @@ class SaveOnAnyImprovement(Callback):
 
         if any_improved:
             self.model.save(self.filepath)
-            print(f"✔️ Saved model at epoch {epoch+1} because " +
-                  ", ".join(improvements))
+            print(
+                f"✔️ Saved model at epoch {epoch+1} because " +
+                ", ".join(improvements)
+            )
 
-class CustomEval(tf.keras.callbacks.Callback):
-    def __init__(self, val_ds):
+class CustomEval(Callback):
+    def __init__(self, val_ds, strategy):
         super().__init__()
-        self.val_ds = val_ds
-        self.metric = tf.keras.metrics.SparseCategoricalAccuracy(name="val_token_acc")
+        self.val_ds   = val_ds
+        self.strategy = strategy
 
     def on_epoch_end(self, epoch, logs=None):
-        logs = logs or {}
-
-        train_loss = logs.get("loss")
-        train_acc  = logs.get("accuracy")
-        val_loss   = logs.get("val_loss")
-        val_acc    = logs.get("val_accuracy")
-        print(
-            f"Epoch {epoch+1:>2} — "
-            f"loss: {train_loss:.4f}, acc: {train_acc:.4f} | "
-            f"val_loss: {val_loss:.4f}, val_acc: {val_acc:.4f}"
-        )
-        self.metric.reset_state()     
-        for (enc_in, dec_in), dec_tgt in self.val_ds:
+        # run one step per replica
+        def step(batch):
+            (enc_in, dec_in), dec_tgt = batch
             preds = self.model([enc_in, dec_in], training=False)
-            mask = tf.cast(tf.not_equal(dec_tgt, 0), tf.float32)
-            self.metric.update_state(dec_tgt, preds, sample_weight=mask)
+            mask  = tf.cast(tf.not_equal(dec_tgt, 0), tf.float32)
+            acc   = tf.keras.metrics.sparse_categorical_accuracy(dec_tgt, preds)
+            return tf.reduce_sum(acc * mask), tf.reduce_sum(mask)
 
-        acc = self.metric.result().numpy()
-        print(f"Validation Token Accuracy: {acc:.4f}")
-        logs['val_token_acc'] = acc
+        total_correct = 0.0
+        total_count   = 0.0
+        for batch in self.val_ds:
+            (c, n) = self.strategy.run(step, args=(batch,))
+            c      = self.strategy.reduce(tf.distribute.ReduceOp.SUM, c, axis=None)
+            n      = self.strategy.reduce(tf.distribute.ReduceOp.SUM, n, axis=None)
+            total_correct += c
+            total_count   += n
 
-def train_model(data_path, epochs=25, batch_size=128, emb_dim=50, train_from_scratch = True):
+        token_acc = total_correct / total_count
+        print(f"Validation token accuracy: {token_acc:.4f}")
+        logs = logs or {}
+        logs['val_token_acc'] = token_acc
+
+
+def train_model(data_path, epochs=85, batch_size=128, emb_dim=50, train_from_scratch = True):
     inputs, targets = load_training_data(data_path)
     split = int(0.9 * len(inputs))
     save_dir     = "app/models/saved_model"
@@ -445,7 +453,7 @@ def train_model(data_path, epochs=25, batch_size=128, emb_dim=50, train_from_scr
 
         total_epochs = epochs
         resource_cb = ResourceMonitor(total_epochs, save_dir)
-        
+        custom_eval_cb = CustomEval(val_ds, strategy)
         rouge_cb = RougeCallback(val_ds, tok_tgt, max_length_target, n_samples=10)
         save_cb  = SaveOnAnyImprovement(model_path)
         reduce_lr = ReduceLROnPlateau(
@@ -455,24 +463,20 @@ def train_model(data_path, epochs=25, batch_size=128, emb_dim=50, train_from_scr
             min_lr=1e-5,
             verbose=1
             )
-        # b) (Re)define callbacks inside scope
+
         callbacks = [
             EarlyStopping(
-                monitor='val_accuracy',
+                monitor='val_rouge1',   
                 mode='max',
-                patience=3,
-                restore_best_weights=True,
-                verbose=1
+                patience=5,
+                restore_best_weights=True
                 ),
                 rouge_cb,
                 save_cb,
-                CustomEval(val_ds),
+                custom_eval_cb,  
                 resource_cb,
                 reduce_lr
         ]
-
-
-        # c) Train—this will now shard batches across your GPUs
         history = model.fit(
             train_ds,
             epochs=epochs,
