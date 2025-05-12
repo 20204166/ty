@@ -59,8 +59,9 @@ def load_training_data(data_path: str):
     targets = [f"<start> {t} <end>" for t in targets]
     return inputs, targets
 
-def create_tokenizer(texts, oov_token="<OOV>"):
-    tok = Tokenizer(oov_token=oov_token)
+MAX_VOCAB = 30_000
+def create_tokenizer(texts, oov_token="<OOV>", max_words=MAX_VOCAB):
+    tok = Tokenizer(num_words=max_words, oov_token=oov_token)
     tok.fit_on_texts(texts)
     return tok
 
@@ -371,7 +372,7 @@ class CustomEval(tf.keras.callbacks.Callback):
         print(f"Validation Token Accuracy: {acc:.4f}")
         logs['val_token_acc'] = acc
 
-def train_model(data_path, epochs=25, batch_size=256, emb_dim=50, train_from_scratch = True):
+def train_model(data_path, epochs=25, batch_size=160, emb_dim=50, train_from_scratch = True):
     inputs, targets = load_training_data(data_path)
     split = int(0.9 * len(inputs))
     save_dir     = "app/models/saved_model"
@@ -393,15 +394,15 @@ def train_model(data_path, epochs=25, batch_size=256, emb_dim=50, train_from_scr
         tok_in  = load_tokenizer(tok_in_path)
         tok_tgt = load_tokenizer(tok_tgt_path)
     else:
-        tok_in  = create_tokenizer(inputs)
-        tok_tgt = create_tokenizer(targets)
+        tok_in  = create_tokenizer(inputs,  max_words=MAX_VOCAB)
+        tok_tgt = create_tokenizer(targets, max_words=MAX_VOCAB)
         with open(tok_in_path, 'w', encoding='utf-8') as f:
             f.write(tok_in.to_json())
         with open(tok_tgt_path, 'w', encoding='utf-8') as f:
             f.write(tok_tgt.to_json())
 
-    vs_in = len(tok_in.word_index) + 1
-    vs_tgt = len(tok_tgt.word_index) + 1
+    vs_in  = min(len(tok_in.word_index)  + 1, MAX_VOCAB+1)
+    vs_tgt = min(len(tok_tgt.word_index) + 1, MAX_VOCAB+1)
 
     from tensorflow.keras import mixed_precision
     mixed_precision.set_global_policy('mixed_float16')
