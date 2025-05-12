@@ -3,27 +3,16 @@ os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 
 import tensorflow as tf
 
-
 gpus = tf.config.list_physical_devices('GPU')
 if gpus:
-    for g in gpus:
-        tf.config.experimental.set_memory_growth(g, True)
-    for g in gpus:
-        tf.config.set_logical_device_configuration(
-            g,
-            [tf.config.LogicalDeviceConfiguration(memory_limit=24000)]
-        )
+  
+    for gpu in gpus:
+        tf.config.set_memory_growth(gpu, True)
+    
+    tf.config.set_visible_devices(gpus, 'GPU')
 
-
-# 3) Safe to do other TF operations
-print("TensorFlow version:", tf.__version__)
-with tf.device('/GPU:0' if gpus else '/CPU:0'):
-    a = tf.random.normal([1000, 1000])
-    b = tf.random.normal([1000, 1000])
-    c = tf.matmul(a, b)
-print("Operation result shape:", c.shape)
-os.system("nvidia-smi")
-
+print("Physical GPUs:", gpus)
+print("Logical GPUs visible:", tf.config.list_logical_devices('GPU'))
 from tensorflow.keras.models import Model, load_model
 from tensorflow.keras.layers import Input, Embedding, Dense, Concatenate, Attention, LSTMCell
 from tensorflow.keras.preprocessing.text import Tokenizer
