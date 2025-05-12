@@ -199,16 +199,18 @@ class RougeCallback(Callback):
 
         for (enc, _), dec_tgt in self.val_ds.take(self.n_samples):
             # --- greedy decode to `preds` exactly as before ---
-            batch = tf.shape(enc)[0]
+            batch     = tf.shape(enc)[0]
             dec_input = tf.fill([batch,1], self.start_id)
-            result    = tf.zeros([batch,0], dtype=tf.int32)
-
+            result    = tf.zeros([batch, 0], dtype=tf.int32)
             for t in range(self.max_length):
-                logits     = self.model([enc, dec_input], training=False)
-                next_token = tf.cast(tf.argmax(logits[:, -1, :], axis=-1), tf.int32)
-                result     = tf.concat([result, next_token[:,None]], axis=1)
-                dec_input  = tf.concat([dec_input, next_token[:,None]], axis=1)
+                pad_amt    = self.max_length - tf.shape(dec_input)[1]
+                dec_padded = tf.pad(dec_input, [[0,0],[0,pad_amt]], constant_values=0)
 
+    
+                logits     = self.model([enc, dec_padded], training=False)
+                next_token = tf.cast(tf.argmax(logits[:, t, :], axis=-1), tf.int32)
+                dec_input  = tf.concat([dec_input, next_token[:,None]], axis=1)
+                result     = tf.concat([result,    next_token[:,None]], axis=1)
             # --- stringify and score ---
             for ref_seq, pred_seq in zip(dec_tgt.numpy(), result.numpy()):
                 # strip pad/<start>/<end>
