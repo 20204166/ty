@@ -441,8 +441,7 @@ def train_model(data_path, epochs=85, batch_size=64, emb_dim=50, train_from_scra
     )
     n_rouge = 10
     rouge_ds = (
-        tf.data.Dataset
-          .from_tensor_slices(((val_enc, val_dec_in), val_dec_tgt))
+        tf.data.Dataset.from_tensor_slices(((val_enc, val_dec_in), val_dec_tgt))
           .take(n_rouge)   
           .cache()         
           .repeat()        
