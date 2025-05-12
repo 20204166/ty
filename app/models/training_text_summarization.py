@@ -381,15 +381,11 @@ def train_model(data_path, epochs=25, batch_size=160, emb_dim=50, train_from_scr
     model_path   = f"{save_dir}/summarization_model.keras"
     
     os.makedirs(save_dir, exist_ok=True)
-    
+    MAX_VOCAB = 30_000
 
-    split = int(0.9 * len(inputs))
     train_in, train_tgt = inputs[:split], targets[:split]
     val_in, val_tgt = inputs[split:], targets[split:]
-
     
-
-
     if os.path.exists(tok_in_path) and os.path.exists(tok_tgt_path):
         tok_in  = load_tokenizer(tok_in_path)
         tok_tgt = load_tokenizer(tok_tgt_path)
@@ -401,6 +397,7 @@ def train_model(data_path, epochs=25, batch_size=160, emb_dim=50, train_from_scr
         with open(tok_tgt_path, 'w', encoding='utf-8') as f:
             f.write(tok_tgt.to_json())
 
+    # ── RIGHT HERE ── cap vocab sizes so your Dense isn’t huge
     vs_in  = min(len(tok_in.word_index)  + 1, MAX_VOCAB+1)
     vs_tgt = min(len(tok_tgt.word_index) + 1, MAX_VOCAB+1)
 
