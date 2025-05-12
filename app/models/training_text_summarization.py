@@ -183,6 +183,37 @@ def plot_history(hist, save_dir):
           *(os.path.basename(tok_path) if 'tok_path' in locals() else []),
           *(os.path.basename(rouge_path) if 'rouge_path' in locals() else []))
     
+class SamplePrediction(Callback):
+    def __init__(self, val_ds, tokenizer, max_len, samples=3):
+        super().__init__()
+        self.val_ds      = val_ds.take(1).unbatch().batch(samples)
+        self.tokenizer   = tokenizer
+        self.start_id    = tokenizer.word_index['<start>']
+        self.end_id      = tokenizer.word_index['<end>']
+        self.max_length  = max_len
+
+    def on_epoch_end(self, epoch, logs=None):
+        (enc, _), dec_tgt = next(iter(self.val_ds))
+        # greedy decode:
+        dec_in  = tf.fill([enc.shape[0], 1], self.start_id)
+        result  = []
+        for t in range(self.max_length):
+            pad = self.max_length - tf.shape(dec_in)[1]
+            logits = self.model([enc, tf.pad(dec_in, [[0,0],[0,pad]])], training=False)
+            next_tok = tf.argmax(logits[:, t, :], axis=-1, output_type=tf.int32)
+            dec_in  = tf.concat([dec_in, next_tok[:,None]], axis=1)
+        preds = dec_in[:,1:].numpy()
+
+        print(f"\n—— Sample predictions after epoch {epoch+1} ——")
+        for i in range(enc.shape[0]):
+            ref_seq = dec_tgt[i].numpy()
+            ref     = " ".join(self.tokenizer.index_word.get(w, "") 
+                               for w in ref_seq if w not in (0, self.start_id, self.end_id))
+            pred_seq = preds[i]
+            pred     = " ".join(self.tokenizer.index_word.get(w, "") 
+                                for w in pred_seq if w not in (0, self.start_id, self.end_id))
+            print(f"REF:  {ref}\nPRED: {pred}\n")
+  
 class RougeCallback(Callback):
     def __init__(self, val_ds, tgt_tokenizer, max_length_target, n_samples):
         super().__init__()
@@ -383,7 +414,7 @@ class CustomEval(Callback):
         print(f"Validation token accuracy: {token_acc:.4f}")
 
 
-def train_model(data_path, epochs=85, batch_size=120, emb_dim=50, train_from_scratch = True):
+def train_model(data_path, epochs=90, batch_size=240, emb_dim=50, train_from_scratch = True):
     inputs, targets = load_training_data(data_path)
     split = int(0.9 * len(inputs))
     save_dir     = "app/models/saved_model"
