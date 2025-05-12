@@ -189,46 +189,118 @@ def plot_history(hist, save_dir):
           *(os.path.basename(rouge_path) if 'rouge_path' in locals() else []))
 
 
-class PeriodicPlotCallback(Callback):
+class SnapshotCallback(Callback):
     def __init__(self, save_dir, interval_epochs=10):
         super().__init__()
-        self.save_dir = save_dir
-        self.interval = interval_epochs
+        self.save_dir       = save_dir
+        self.interval       = interval_epochs
+        self.cpu_usage      = []
+        self.ram_usage      = []
+        self.gpu_usage      = {}  # gpu index → list of util readings
         os.makedirs(self.save_dir, exist_ok=True)
 
-    def _plot(self, upto_epoch=None, suffix=""):
-        # helper to draw and save curves up to `upto_epoch` (inclusive)
+    def _get_gpu_utils(self):
+        try:
+            raw = subprocess.check_output([
+                "nvidia-smi",
+                "--query-gpu=utilization.gpu",
+                "--format=csv,noheader,nounits"
+            ])
+            lines = raw.decode().strip().splitlines()
+            return [float(l) for l in lines if l.strip()]
+        except Exception:
+            return []
+
+    def _plot_metrics(self, upto, suffix):
         h = self.model.history.history
-        epochs = range(1, len(h["loss"]) + 1) if upto_epoch is None else range(1, upto_epoch + 2)
+        epochs = range(1, upto + 1)
 
-        # LOSS
-        plt.figure()
-        plt.plot(epochs, h["loss"][:len(epochs)],     label="Train loss")
-        plt.plot(epochs, h["val_loss"][:len(epochs)], label="Val loss")
+        # ── 1) Loss ──
+        plt.figure(); 
+        plt.plot(epochs, h["loss"][:upto],     label="Train loss")
+        plt.plot(epochs, h["val_loss"][:upto], label="Val loss")
         plt.xlabel("Epoch"); plt.ylabel("Loss")
-        plt.legend(); plt.title(f"Loss (up to epoch {epochs[-1]})")
-        out = os.path.join(self.save_dir, f"loss_upto{epochs[-1]}{suffix}.png")
-        plt.savefig(out); plt.close()
+        plt.title(f"Loss (1–{upto})"); plt.legend()
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.save_dir, f"loss_1to{upto}{suffix}.png"))
+        plt.close()
 
-        # ACCURACY
+        # ── 2) Accuracy ──
         plt.figure()
-        plt.plot(epochs, h["accuracy"][:len(epochs)],     label="Train acc")
-        plt.plot(epochs, h["val_accuracy"][:len(epochs)], label="Val acc")
+        plt.plot(epochs, h["accuracy"][:upto],     label="Train acc")
+        plt.plot(epochs, h["val_accuracy"][:upto], label="Val acc")
         plt.xlabel("Epoch"); plt.ylabel("Accuracy")
-        plt.legend(); plt.title(f"Accuracy (up to epoch {epochs[-1]})")
-        out = os.path.join(self.save_dir, f"acc_upto{epochs[-1]}{suffix}.png")
-        plt.savefig(out); plt.close()
+        plt.title(f"Accuracy (1–{upto})"); plt.legend()
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.save_dir, f"acc_1to{upto}{suffix}.png"))
+        plt.close()
+
+        # ── 3) Token accuracy ──
+        if "val_token_accuracy" in h:
+            plt.figure()
+            plt.plot(epochs, h["val_token_accuracy"][:upto], label="Val token acc")
+            plt.xlabel("Epoch"); plt.ylabel("Token Accuracy")
+            plt.title(f"Token Accuracy (1–{upto})"); plt.legend()
+            plt.tight_layout()
+            plt.savefig(os.path.join(self.save_dir, f"token_acc_1to{upto}{suffix}.png"))
+            plt.close()
+
+        # ── 4) ROUGE ──
+        if "val_rouge1" in h:
+            plt.figure()
+            plt.plot(epochs, h["val_rouge1"][:upto], label="ROUGE-1")
+            plt.plot(epochs, h["val_rouge2"][:upto], label="ROUGE-2")
+            plt.plot(epochs, h["val_rougeL"][:upto], label="ROUGE-L")
+            plt.xlabel("Epoch"); plt.ylabel("F1 Score")
+            plt.title(f"ROUGE (1–{upto})"); plt.legend()
+            plt.tight_layout()
+            plt.savefig(os.path.join(self.save_dir, f"rouge_1to{upto}{suffix}.png"))
+            plt.close()
+
+    def _plot_resources(self, upto, suffix):
+        epochs = range(1, upto + 1)
+        # CPU & RAM
+        plt.figure()
+        plt.plot(epochs, self.cpu_usage[:upto], label="CPU %")
+        plt.plot(epochs, self.ram_usage[:upto], label="RAM %")
+        plt.xlabel("Epoch"); plt.ylabel("Percent")
+        plt.title(f"CPU & RAM (1–{upto})"); plt.legend()
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.save_dir, f"cpu_ram_1to{upto}{suffix}.png"))
+        plt.close()
+
+        # per-GPU
+        for i, util_list in self.gpu_usage.items():
+            plt.figure()
+            plt.plot(epochs, util_list[:upto], label=f"GPU{i} %")
+            plt.xlabel("Epoch"); plt.ylabel("GPU Util %")
+            plt.title(f"GPU {i} (1–{upto})")
+            plt.tight_layout()
+            plt.savefig(os.path.join(self.save_dir, f"gpu{i}_1to{upto}{suffix}.png"))
+            plt.close()
 
     def on_epoch_end(self, epoch, logs=None):
-        # every `interval` epochs, snapshot
-        if (epoch + 1) % self.interval == 0:
-            self._plot(upto_epoch=epoch, suffix=f"_ep{epoch+1}")
+        # record resources
+        self.cpu_usage.append(psutil.cpu_percent())
+        self.ram_usage.append(psutil.virtual_memory().percent)
+        gpu_vals = self._get_gpu_utils()
+        for i, u in enumerate(gpu_vals):
+            self.gpu_usage.setdefault(i, []).append(u)
+
+        current = epoch + 1
+        if current % self.interval == 0:
+            # snapshot everything up through this epoch
+            suffix = f"_ep{current}"
+            self._plot_metrics(current, suffix)
+            self._plot_resources(current, suffix)
 
     def on_train_end(self, logs=None):
-        # final full-range plot
-        self._plot(suffix="_final")
-        print(f"Saved final training curves to {self.save_dir}")
-   
+        total = len(self.model.history.history["loss"])
+        # final full-range plots
+        self._plot_metrics(total, "_final")
+        self._plot_resources(total, "_final")
+        print(f"All snapshots saved under {self.save_dir}")
+
 class SamplePrediction(Callback):
     def __init__(self, val_ds, tokenizer, max_len, samples=3):
         super().__init__()
@@ -321,80 +393,6 @@ class RougeCallback(Callback):
         print(f"Epoch {epoch+1}: ROUGE-1 {avg['rouge1']:.4f}, "
               f"ROUGE-2 {avg['rouge2']:.4f}, ROUGE-L {avg['rougeL']:.4f}")
 
-
-class ResourceMonitor(Callback):
-    def __init__(self, total_epochs, save_dir):
-        super().__init__()
-        self.total_epochs = total_epochs
-        self.save_dir     = save_dir
-        self.cpu_usage    = []
-        self.ram_usage    = []
-        
-        self.gpu_usage    = {}  
-
-    def _get_gpu_utils(self):
-        """Returns a list of floats, one per GPU device."""
-        try:
-            raw = subprocess.check_output([
-                "nvidia-smi",
-                "--query-gpu=utilization.gpu",
-                "--format=csv,noheader,nounits"
-            ])
-            lines = raw.decode("utf-8").strip().splitlines()
-            # parse each line into a float
-            vals  = [float(l) for l in lines if l.strip()]
-            return vals
-        except Exception:
-            return []
-
-    def on_epoch_end(self, epoch, logs=None):
-        cpu = psutil.cpu_percent(interval=None)
-        ram = psutil.virtual_memory().percent
-        self.cpu_usage.append(cpu)
-        self.ram_usage.append(ram)
-
-        gpu_vals = self._get_gpu_utils()
-        # record each GPU’s util; initialize lists if first epoch
-        for i, u in enumerate(gpu_vals):
-            self.gpu_usage.setdefault(i, []).append(u)
-
-        # for display, you might print per-GPU or an average:
-        if gpu_vals:
-            avg_gpu = sum(gpu_vals) / len(gpu_vals)
-            gpu_str = ", ".join(f"GPU{i}={u:.1f}%" for i,u in enumerate(gpu_vals))
-        else:
-            avg_gpu = 0.0
-            gpu_str = "no-GPU"
-        print(f"Epoch {epoch+1}: CPU {cpu:.1f}%  RAM {ram:.1f}%  {gpu_str}")
-
-        # only plot & save at the final epoch
-        if (epoch + 1) == self.total_epochs:
-            fig, axes = plt.subplots(2 + len(gpu_vals), 1, figsize=(8, 4*(2+len(gpu_vals))))
-            
-            # CPU
-            axes[0].plot(range(1, self.total_epochs+1), self.cpu_usage, marker='o')
-            axes[0].set_title("CPU Usage (%)")
-            axes[0].set_ylabel("CPU %")
-            
-            # RAM
-            axes[1].plot(range(1, self.total_epochs+1), self.ram_usage, marker='o')
-            axes[1].set_title("RAM Usage (%)")
-            axes[1].set_ylabel("RAM %")
-
-            # one subplot per GPU
-            for i in range(len(gpu_vals)):
-                axes[2+i].plot(range(1, self.total_epochs+1),
-                               self.gpu_usage[i], marker='o')
-                axes[2+i].set_title(f"GPU {i} Usage (%)")
-                axes[2+i].set_ylabel("GPU %")
-            
-            for ax in axes:
-                ax.set_xlabel("Epoch")
-            plt.tight_layout()
-            out_path = os.path.join(self.save_dir, "resource_usage.png")
-            plt.savefig(out_path)
-            print(f"Saved resource usage plot to {out_path}")
-            plt.close(fig)
 
 class SaveOnAnyImprovement(tf.keras.callbacks.Callback):
     def __init__(self, filepath):
@@ -545,7 +543,10 @@ def train_model(data_path, epochs=90, batch_size=120, emb_dim=50, train_from_scr
             )
 
         total_epochs = epochs
-        resource_cb = ResourceMonitor(total_epochs, save_dir)
+        snap_cb = SnapshotCallback(
+            save_dir="app/models/saved_model/plots",
+            interval_epochs=10
+            )
         custom_eval_cb = CustomEval(val_ds, strategy)
         rouge_cb = RougeCallback(
             val_ds=rouge_ds,         
@@ -572,9 +573,8 @@ def train_model(data_path, epochs=90, batch_size=120, emb_dim=50, train_from_scr
                 restore_best_weights=True
                 ),
                 save_cb,
-                custom_eval_cb,  
-                resource_cb,
-                periodic_plots,
+                custom_eval_cb,
+                snap_cb,
                 reduce_lr
         ]
         history = model.fit(
