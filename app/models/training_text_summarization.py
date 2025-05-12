@@ -4,11 +4,15 @@ os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 import tensorflow as tf
 
 gpus = tf.config.list_physical_devices('GPU')
-for g in gpus:
-    tf.config.set_logical_device_configuration(
-        g, [tf.config.LogicalDeviceConfiguration(memory_limit=24000)]
-    )
-    tf.config.experimental.set_memory_growth(g, True)
+gpus = tf.config.list_physical_devices('GPU')
+if gpus:
+    for g in gpus:
+        tf.config.experimental.set_memory_growth(g, True)
+    for g in gpus:
+        tf.config.set_logical_device_configuration(
+            g,
+            [tf.config.LogicalDeviceConfiguration(memory_limit=24000)]
+        )
 
 
 # 3) Safe to do other TF operations
