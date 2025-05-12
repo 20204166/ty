@@ -498,5 +498,9 @@ def train_model(data_path, epochs=25, batch_size=160, emb_dim=50, train_from_scr
     return model
 
 if __name__ == "__main__":
-    model = train_model("app/models/data/text/training_data.json")
+    import sys
+    data_path = sys.argv[1] if len(sys.argv) > 1 else "app/models/data/text/training_data.json"
+    model = train_model(data_path)
     print("Training complete.")
+    print("Model saved to:", "app/models/saved_model/summarization_model.keras")
+    print("Input tokenizer saved to:", "app/models/saved_model/tokenizer_input.json")   
