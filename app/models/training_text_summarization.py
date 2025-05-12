@@ -28,9 +28,10 @@ from tensorflow.keras.models import Model, load_model
 from tensorflow.keras.layers import Input, Embedding, Dense, Concatenate, Attention, LSTMCell
 from tensorflow.keras.preprocessing.text import Tokenizer
 from tensorflow.keras.preprocessing.sequence import pad_sequences
-from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, Callback, ReduceLROnPlateau
+from tensorflow.keras.callbacks import EarlyStopping, Callback, ReduceLROnPlateau
 from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.utils import plot_model   
+from tensorflow.keras.utils import plot_model 
+from tensorflow.keras.optimizers.schedules import ExponentialDecay  
 from rouge_score import rouge_scorer
 import psutil
 import subprocess
@@ -150,9 +151,9 @@ def plot_history(hist, save_dir):
     plt.close()
 
     # ── 3) Token‐accuracy curve ──
-    if 'val_token_acc' in hist.history:
+    if 'val_token_accuracy' in hist.history:
         plt.figure()
-        plt.plot(epochs, hist.history['val_token_acc'], label='Val token acc')
+        plt.plot(epochs, hist.history['val_token_accuracy'], label='Val token acc')
         plt.xlabel('Epoch'); plt.ylabel('Token Accuracy')
         plt.title('Validation Token Accuracy')
         plt.legend()
@@ -335,7 +336,8 @@ class SaveOnAnyImprovement(tf.keras.callbacks.Callback):
 
             # decide if higher-is-better or lower-is-better
             is_loss = name.endswith("loss")
-            best_val = self.best.get(name, np.Inf if is_loss else -np.Inf)
+            best_val = self.best.get(name, np.inf if is_loss else -np.inf)
+
 
             improved = (value < best_val) if is_loss else (value > best_val)
             if improved:
@@ -378,7 +380,7 @@ class CustomEval(Callback):
         token_acc = total_correct / total_count
         print(f"Validation token accuracy: {token_acc:.4f}")
         logs = logs or {}
-        logs['val_token_acc'] = token_acc
+        logs['val_token_accuracy'] = token_acc
 
 
 def train_model(data_path, epochs=85, batch_size=128, emb_dim=50, train_from_scratch = True):
@@ -434,7 +436,16 @@ def train_model(data_path, epochs=85, batch_size=128, emb_dim=50, train_from_scr
     val_ds = (
         tf.data.Dataset
           .from_tensor_slices(((val_enc, val_dec_in), val_dec_tgt))
-          .cache()
+          .batch(batch_size)
+          .prefetch(tf.data.AUTOTUNE)
+    )
+    n_rouge = 10
+    rouge_ds = (
+        tf.data.Dataset
+          .from_tensor_slices(((val_enc, val_dec_in), val_dec_tgt))
+          .take(n_rouge)   # only these 10 samples
+          .cache()         # now caching exactly those 10
+          .repeat()        # so each epoch you get a fresh cache
           .batch(batch_size)
           .prefetch(tf.data.AUTOTUNE)
     )
@@ -444,7 +455,13 @@ def train_model(data_path, epochs=85, batch_size=128, emb_dim=50, train_from_scr
     with strategy.scope():
         if (not train_from_scratch) and os.path.exists(model_path):
             print("Loading model from disk")
-            model = load_model(model_path)
+            model = tf.keras.models.load_model(
+            model_path,
+            custom_objects={
+                'Attention': Attention,
+                'ExponentialDecay': ExponentialDecay,
+            }
+            )
         else:
             model = build_seq2seq_model(
                 vs_in, vs_tgt, emb_dim,
@@ -454,7 +471,13 @@ def train_model(data_path, epochs=85, batch_size=128, emb_dim=50, train_from_scr
         total_epochs = epochs
         resource_cb = ResourceMonitor(total_epochs, save_dir)
         custom_eval_cb = CustomEval(val_ds, strategy)
-        rouge_cb = RougeCallback(val_ds, tok_tgt, max_length_target, n_samples=10)
+        rouge_cb = RougeCallback(
+            rouge_ds,        
+            tok_tgt,          
+            max_length_target,
+            n_samples=n_rouge
+        )
+
         save_cb  = SaveOnAnyImprovement(model_path)
         reduce_lr = ReduceLROnPlateau(
             monitor='val_loss',
@@ -462,16 +485,16 @@ def train_model(data_path, epochs=85, batch_size=128, emb_dim=50, train_from_scr
             patience=2,
             min_lr=1e-5,
             verbose=1
-            )
+        )
 
         callbacks = [
+            rouge_cb,
             EarlyStopping(
                 monitor='val_rouge1',   
                 mode='max',
                 patience=5,
                 restore_best_weights=True
                 ),
-                rouge_cb,
                 save_cb,
                 custom_eval_cb,  
                 resource_cb,
@@ -483,7 +506,9 @@ def train_model(data_path, epochs=85, batch_size=128, emb_dim=50, train_from_scr
             verbose=2,
             callbacks=callbacks,
             validation_data=val_ds
-        )
+            )
+
+
 
     # after training: save tokenizers, plot history, return model
     with open(tok_in_path, 'w', encoding='utf-8') as f:
