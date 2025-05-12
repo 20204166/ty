@@ -4,18 +4,12 @@ os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 import tensorflow as tf
 
 gpus = tf.config.list_physical_devices('GPU')
-if gpus:
-    try:
-        for gpu in gpus:
-            tf.config.experimental.set_memory_growth(gpu, True)
-        print("Enabled memory growth on GPUs:", gpus)
-    except RuntimeError as e:
-        print("Error setting GPU memory growth:", e)
-else:
-    print("No GPUs found; using CPU.")
+for g in gpus:
+    tf.config.set_logical_device_configuration(
+        g, [tf.config.LogicalDeviceConfiguration(memory_limit=24000)]
+    )
+    tf.config.experimental.set_memory_growth(g, True)
 
-# 2) Enable XLA now that memory growth is set
-tf.config.optimizer.set_jit(True)
 
 # 3) Safe to do other TF operations
 print("TensorFlow version:", tf.__version__)
