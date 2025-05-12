@@ -3,7 +3,7 @@ os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 
 import tensorflow as tf
 
-gpus = tf.config.list_physical_devices('GPU')
+
 gpus = tf.config.list_physical_devices('GPU')
 if gpus:
     for g in gpus:
@@ -67,9 +67,12 @@ def load_tokenizer(path: str):
     with open(path, 'r', encoding='utf-8') as f:
         return tf.keras.preprocessing.text.tokenizer_from_json(f.read())
 
-def preprocess_texts(texts, tokenizer, max_length):
+def preprocess_texts(texts, tokenizer, max_length, max_vocab):
     sequences = tokenizer.texts_to_sequences(texts)
-    return pad_sequences(sequences, maxlen=max_length, padding='post')
+    arr = pad_sequences(sequences, maxlen=max_length, padding='post',truncating='post')
+    arr = np.where(arr >= max_vocab, 1, arr)
+    return arr
+
 
 def prepare_decoder_sequences(sequences):
     dec_in = sequences[:, :-1]
@@ -409,13 +412,12 @@ def train_model(data_path, epochs=85, batch_size=128, emb_dim=50, train_from_scr
     from tensorflow.keras import mixed_precision
     mixed_precision.set_global_policy('mixed_float16')
 
-
-    train_enc = preprocess_texts(train_in, tok_in, max_length_input)
-    train_dec = preprocess_texts(train_tgt, tok_tgt, max_length_target)
+    train_enc = preprocess_texts(train_in, tok_in,  max_length_input,  vs_in)
+    train_dec = preprocess_texts(train_tgt, tok_tgt, max_length_target, vs_tgt)
     train_dec_in, train_dec_tgt = prepare_decoder_sequences(train_dec)
 
-    val_enc = preprocess_texts(val_in, tok_in, max_length_input)
-    val_dec = preprocess_texts(val_tgt, tok_tgt, max_length_target)
+    val_enc = preprocess_texts(val_in,  tok_in,  max_length_input,  vs_in)
+    val_dec = preprocess_texts(val_tgt, tok_tgt, max_length_target, vs_tgt)
     val_dec_in, val_dec_tgt = prepare_decoder_sequences(val_dec)
 
     train_ds = (
