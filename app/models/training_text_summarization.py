@@ -187,7 +187,48 @@ def plot_history(hist, save_dir):
           os.path.basename(acc_path),
           *(os.path.basename(tok_path) if 'tok_path' in locals() else []),
           *(os.path.basename(rouge_path) if 'rouge_path' in locals() else []))
-    
+
+
+class PeriodicPlotCallback(Callback):
+    def __init__(self, save_dir, interval_epochs=10):
+        super().__init__()
+        self.save_dir = save_dir
+        self.interval = interval_epochs
+        os.makedirs(self.save_dir, exist_ok=True)
+
+    def _plot(self, upto_epoch=None, suffix=""):
+        # helper to draw and save curves up to `upto_epoch` (inclusive)
+        h = self.model.history.history
+        epochs = range(1, len(h["loss"]) + 1) if upto_epoch is None else range(1, upto_epoch + 2)
+
+        # LOSS
+        plt.figure()
+        plt.plot(epochs, h["loss"][:len(epochs)],     label="Train loss")
+        plt.plot(epochs, h["val_loss"][:len(epochs)], label="Val loss")
+        plt.xlabel("Epoch"); plt.ylabel("Loss")
+        plt.legend(); plt.title(f"Loss (up to epoch {epochs[-1]})")
+        out = os.path.join(self.save_dir, f"loss_upto{epochs[-1]}{suffix}.png")
+        plt.savefig(out); plt.close()
+
+        # ACCURACY
+        plt.figure()
+        plt.plot(epochs, h["accuracy"][:len(epochs)],     label="Train acc")
+        plt.plot(epochs, h["val_accuracy"][:len(epochs)], label="Val acc")
+        plt.xlabel("Epoch"); plt.ylabel("Accuracy")
+        plt.legend(); plt.title(f"Accuracy (up to epoch {epochs[-1]})")
+        out = os.path.join(self.save_dir, f"acc_upto{epochs[-1]}{suffix}.png")
+        plt.savefig(out); plt.close()
+
+    def on_epoch_end(self, epoch, logs=None):
+        # every `interval` epochs, snapshot
+        if (epoch + 1) % self.interval == 0:
+            self._plot(upto_epoch=epoch, suffix=f"_ep{epoch+1}")
+
+    def on_train_end(self, logs=None):
+        # final full-range plot
+        self._plot(suffix="_final")
+        print(f"Saved final training curves to {self.save_dir}")
+   
 class SamplePrediction(Callback):
     def __init__(self, val_ds, tokenizer, max_len, samples=3):
         super().__init__()
@@ -533,6 +574,7 @@ def train_model(data_path, epochs=90, batch_size=120, emb_dim=50, train_from_scr
                 save_cb,
                 custom_eval_cb,  
                 resource_cb,
+                periodic_plots,
                 reduce_lr
         ]
         history = model.fit(
