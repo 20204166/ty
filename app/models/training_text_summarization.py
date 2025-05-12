@@ -59,7 +59,7 @@ def load_training_data(data_path: str):
     targets = [f"<start> {t} <end>" for t in targets]
     return inputs, targets
 
-MAX_VOCAB = 30_000
+MAX_VOCAB = 10_000
 def create_tokenizer(texts, oov_token="<OOV>", max_words=MAX_VOCAB):
     tok = Tokenizer(num_words=max_words, oov_token=oov_token)
     tok.fit_on_texts(texts)
@@ -381,7 +381,7 @@ def train_model(data_path, epochs=25, batch_size=128, emb_dim=50, train_from_scr
     model_path   = f"{save_dir}/summarization_model.keras"
     
     os.makedirs(save_dir, exist_ok=True)
-    MAX_VOCAB = 30_000
+    MAX_VOCAB = 10_000
 
     train_in, train_tgt = inputs[:split], targets[:split]
     val_in, val_tgt = inputs[split:], targets[split:]
@@ -447,7 +447,7 @@ def train_model(data_path, epochs=25, batch_size=128, emb_dim=50, train_from_scr
         total_epochs = epochs
         resource_cb = ResourceMonitor(total_epochs, save_dir)
         
-        rouge_cb = RougeCallback(val_ds, tok_tgt, max_length_target, n_samples=50)
+        rouge_cb = RougeCallback(val_ds, tok_tgt, max_length_target, n_samples=10)
         save_cb  = SaveOnAnyImprovement(model_path)
         reduce_lr = ReduceLROnPlateau(
             monitor='val_loss',
