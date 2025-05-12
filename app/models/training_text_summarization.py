@@ -39,6 +39,9 @@ import json
 import numpy as np
 import matplotlib.pyplot as plt
 
+tf.config.optimizer.set_jit(True)
+
+
 max_length_input = 50
 max_length_target = 20
 
@@ -179,14 +182,14 @@ def plot_history(hist, save_dir):
           os.path.basename(acc_path),
           *(os.path.basename(tok_path) if 'tok_path' in locals() else []),
           *(os.path.basename(rouge_path) if 'rouge_path' in locals() else []))
-
+    
 class RougeCallback(Callback):
-    def __init__(self, val_ds, tgt_tokenizer, max_length_target, n_samples=100):
+    def __init__(self, val_ds, tgt_tokenizer, max_length_target, n_samples):
         super().__init__()
         self.val_ds     = val_ds
         self.tokenizer  = tgt_tokenizer
-        self.start_id   = tgt_tokenizer.word_index.get('<start>', tgt_tokenizer.word_index.get(tgt_tokenizer.oov_token))
-        self.end_id     = tgt_tokenizer.word_index.get('<end>',   tgt_tokenizer.word_index.get(tgt_tokenizer.oov_token))
+        self.start_id   = tgt_tokenizer.word_index.get('<start>', tgt_tokenizer.word_index[tgt_tokenizer.oov_token])
+        self.end_id     = tgt_tokenizer.word_index.get('<end>',   tgt_tokenizer.word_index[tgt_tokenizer.oov_token])
         self.max_length = max_length_target
         self.scorer     = rouge_scorer.RougeScorer(
             ['rouge1','rouge2','rougeL'], use_stemmer=True
@@ -195,52 +198,52 @@ class RougeCallback(Callback):
 
     def on_epoch_end(self, epoch, logs=None):
         logs = logs or {}
-        total = {'rouge1':0, 'rouge2':0, 'rougeL':0}
+        total = {'rouge1': 0.0, 'rouge2': 0.0, 'rougeL': 0.0}
         count = 0
-        
 
         for (enc, _), dec_tgt in self.val_ds.take(self.n_samples):
-            # --- greedy decode to `preds` exactly as before ---
+            # Greedy decode
             batch     = tf.shape(enc)[0]
             dec_input = tf.fill([batch,1], self.start_id)
             result    = tf.zeros([batch, 0], dtype=tf.int32)
+
             for t in range(self.max_length):
                 pad_amt    = self.max_length - tf.shape(dec_input)[1]
                 dec_padded = tf.pad(dec_input, [[0,0],[0,pad_amt]], constant_values=0)
 
-    
                 logits     = self.model([enc, dec_padded], training=False)
                 next_token = tf.cast(tf.argmax(logits[:, t, :], axis=-1), tf.int32)
                 dec_input  = tf.concat([dec_input, next_token[:,None]], axis=1)
                 result     = tf.concat([result,    next_token[:,None]], axis=1)
-            # --- stringify and score ---
+
+            # **Here's the scoring loop you need:**
             for ref_seq, pred_seq in zip(dec_tgt.numpy(), result.numpy()):
                 # strip pad/<start>/<end>
                 def clean(seq):
-                    return [w for w in seq if w>0
-                            and w != self.start_id
-                            and w != self.end_id]
+                    return [w for w in seq
+                            if w>0 and w!=self.start_id and w!=self.end_id]
+
                 ref_txt  = " ".join(self.tokenizer.index_word[w] for w in clean(ref_seq))
-                pred_txt = " ".join(self.tokenizer.index_word.get(w,"") for w in clean(pred_seq))
+                pred_txt = " ".join(self.tokenizer.index_word.get(w, "") for w in clean(pred_seq))
 
                 sc = self.scorer.score(ref_txt, pred_txt)
-                for k in total:
-                    total[k] += sc[k].fmeasure
+                total['rouge1'] += sc['rouge1'].fmeasure
+                total['rouge2'] += sc['rouge2'].fmeasure
+                total['rougeL'] += sc['rougeL'].fmeasure
                 count += 1
 
         # compute averages
-        avg = {k: float(v/count) for k,v in total.items()}
-        
-        # **inject into logs** so SaveOnAnyImprovement can see them
+        avg = {k: (total[k] / count if count else 0.0) for k in total}
+
+        # inject into logs so other callbacks (EarlyStopping, SaveOnAnyImprovement) can see them
         logs['val_rouge1'] = avg['rouge1']
         logs['val_rouge2'] = avg['rouge2']
         logs['val_rougeL'] = avg['rougeL']
 
-        # and print for yourself
-        print(f"Epoch {epoch+1}: " +
-              f"ROUGE-1 {avg['rouge1']:.4f}, " +
-              f"ROUGE-2 {avg['rouge2']:.4f}, " +
-              f"ROUGE-L {avg['rougeL']:.4f}")
+        # print for visibility
+        print(f"Epoch {epoch+1}: ROUGE-1 {avg['rouge1']:.4f}, "
+              f"ROUGE-2 {avg['rouge2']:.4f}, ROUGE-L {avg['rougeL']:.4f}")
+
 
 class ResourceMonitor(Callback):
     def __init__(self, total_epochs, save_dir):
@@ -323,6 +326,7 @@ class SaveOnAnyImprovement(tf.keras.callbacks.Callback):
         # we'll keep track of the best seen for each monitored metric
         self.best = {}
 
+    
     def on_epoch_end(self, epoch, logs=None):
         logs = logs or {}
         any_improved = False
@@ -356,31 +360,27 @@ class SaveOnAnyImprovement(tf.keras.callbacks.Callback):
 class CustomEval(Callback):
     def __init__(self, val_ds, strategy):
         super().__init__()
-        self.val_ds   = val_ds
+        self.val_ds = val_ds
         self.strategy = strategy
 
-    def on_epoch_end(self, epoch, logs=None):
-        # run one step per replica
-        def step(batch):
-            (enc_in, dec_in), dec_tgt = batch
-            preds = self.model([enc_in, dec_in], training=False)
-            mask  = tf.cast(tf.not_equal(dec_tgt, 0), tf.float32)
-            acc   = tf.keras.metrics.sparse_categorical_accuracy(dec_tgt, preds)
-            return tf.reduce_sum(acc * mask), tf.reduce_sum(mask)
+    @tf.function
+    def _eval_step(self, enc, dec_in, dec_tgt):
+        preds = self.model([enc, dec_in], training=False)
+        mask  = tf.cast(tf.not_equal(dec_tgt, 0), tf.float32)
+        acc   = tf.keras.metrics.sparse_categorical_accuracy(dec_tgt, preds)
+        return tf.reduce_sum(acc * mask), tf.reduce_sum(mask)
 
+    def on_epoch_end(self, epoch, logs=None):
         total_correct = 0.0
         total_count   = 0.0
-        for batch in self.val_ds:
-            (c, n) = self.strategy.run(step, args=(batch,))
-            c      = self.strategy.reduce(tf.distribute.ReduceOp.SUM, c, axis=None)
-            n      = self.strategy.reduce(tf.distribute.ReduceOp.SUM, n, axis=None)
+        for (enc, dec_in), dec_tgt in self.val_ds:
+            c, n = self._eval_step(enc, dec_in, dec_tgt)
             total_correct += c
             total_count   += n
-
         token_acc = total_correct / total_count
-        print(f"Validation token accuracy: {token_acc:.4f}")
         logs = logs or {}
         logs['val_token_accuracy'] = token_acc
+        print(f"Validation token accuracy: {token_acc:.4f}")
 
 
 def train_model(data_path, epochs=85, batch_size=128, emb_dim=50, train_from_scratch = True):
@@ -443,16 +443,16 @@ def train_model(data_path, epochs=85, batch_size=128, emb_dim=50, train_from_scr
     rouge_ds = (
         tf.data.Dataset
           .from_tensor_slices(((val_enc, val_dec_in), val_dec_tgt))
-          .take(n_rouge)   # only these 10 samples
-          .cache()         # now caching exactly those 10
-          .repeat()        # so each epoch you get a fresh cache
+          .take(n_rouge)   
+          .cache()         
+          .repeat()        
           .batch(batch_size)
           .prefetch(tf.data.AUTOTUNE)
     )
 
-    strategy = tf.distribute.MirroredStrategy()
     
-    with strategy.scope():
+    strategy = tf.distribute.MirroredStrategy()
+    with strategy.scope(): 
         if (not train_from_scratch) and os.path.exists(model_path):
             print("Loading model from disk")
             model = tf.keras.models.load_model(
@@ -464,17 +464,17 @@ def train_model(data_path, epochs=85, batch_size=128, emb_dim=50, train_from_scr
             )
         else:
             model = build_seq2seq_model(
-                vs_in, vs_tgt, emb_dim,
-                max_length_input, max_length_target
+            vs_in, vs_tgt, emb_dim,
+            max_length_input, max_length_target
             )
 
         total_epochs = epochs
         resource_cb = ResourceMonitor(total_epochs, save_dir)
         custom_eval_cb = CustomEval(val_ds, strategy)
         rouge_cb = RougeCallback(
-            rouge_ds,        
-            tok_tgt,          
-            max_length_target,
+            val_ds=rouge_ds,         
+            tgt_tokenizer=tok_tgt,         
+            max_length_target=max_length_target,
             n_samples=n_rouge
         )
 
