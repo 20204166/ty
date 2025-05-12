@@ -3,16 +3,32 @@ os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 
 import tensorflow as tf
 
-gpus = tf.config.list_physical_devices('GPU')
+gpus = tf.config.list_physical_devices("GPU")
 if gpus:
-  
     for gpu in gpus:
-        tf.config.set_memory_growth(gpu, True)
-    
-    tf.config.set_visible_devices(gpus, 'GPU')
+        # first try the “stable” API…
+        try:
+            tf.config.set_memory_growth(gpu, True)
+        except AttributeError:
+            # fallback to the experimental API in older TF versions
+            tf.config.experimental.set_memory_growth(gpu, True)
+
+    # make sure TensorFlow only “sees” those real GPUs
+    tf.config.set_visible_devices(gpus, "GPU")
 
 print("Physical GPUs:", gpus)
-print("Logical GPUs visible:", tf.config.list_logical_devices('GPU'))
+print("Logical GPUs:", tf.config.list_logical_devices("GPU"))
+
+
+# 3) Safe to do other TF operations
+print("TensorFlow version:", tf.__version__)
+with tf.device('/GPU:0' if gpus else '/CPU:0'):
+    a = tf.random.normal([1000, 1000])
+    b = tf.random.normal([1000, 1000])
+    c = tf.matmul(a, b)
+print("Operation result shape:", c.shape)
+os.system("nvidia-smi")
+
 from tensorflow.keras.models import Model, load_model
 from tensorflow.keras.layers import Input, Embedding, Dense, Concatenate, Attention, LSTMCell
 from tensorflow.keras.preprocessing.text import Tokenizer
