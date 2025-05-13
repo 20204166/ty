@@ -1,3 +1,8 @@
 datasets
 huggingface-hub
 tqdm
+tensorflow==2.19.0
+rouge-score
+psutil
+matplotlib
+
