@@ -306,6 +306,7 @@ class SamplePrediction(Callback):
         self.max_length  = max_len
 
     def on_epoch_end(self, epoch, logs=None):
+        logs = logs or {}
         (enc, _), dec_tgt = next(iter(self.val_ds))
         # greedy decode:
         dec_in  = tf.fill([enc.shape[0], 1], self.start_id)
