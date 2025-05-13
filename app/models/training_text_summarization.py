@@ -184,15 +184,21 @@ def plot_history(hist, save_dir):
           *(os.path.basename(rouge_path) if 'rouge_path' in locals() else []))
 
 
+import os
+import subprocess
+import psutil
+import matplotlib.pyplot as plt
+from tensorflow.keras.callbacks import Callback
+
 class SnapshotCallback(Callback):
     def __init__(self, save_dir, interval_epochs=10):
         super().__init__()
-        self.save_dir       = save_dir
-        self.interval       = interval_epochs
-        self.cpu_usage      = []
-        self.ram_usage      = []
-        self.gpu_usage      = {}  # gpu index → list of util readings
+        self.save_dir = save_dir
+        self.interval = interval_epochs
         os.makedirs(self.save_dir, exist_ok=True)
+        self.cpu_usage = []
+        self.ram_usage = []
+        self.gpu_usage = {}
 
     def _get_gpu_utils(self):
         try:
@@ -212,9 +218,9 @@ class SnapshotCallback(Callback):
         upto = min(upto, max_epoch)
         epochs = range(1, upto + 1)
 
-        # ── 1) Loss ──
-        plt.figure(); 
-        plt.plot(epochs, h["loss"][:upto],     label="Train loss")
+        # 1) Loss
+        plt.figure()
+        plt.plot(epochs, h["loss"][:upto], label="Train loss")
         plt.plot(epochs, h["val_loss"][:upto], label="Val loss")
         plt.xlabel("Epoch"); plt.ylabel("Loss")
         plt.title(f"Loss (1–{upto})"); plt.legend()
@@ -222,27 +228,17 @@ class SnapshotCallback(Callback):
         plt.savefig(os.path.join(self.save_dir, f"loss_1to{upto}{suffix}.png"))
         plt.close()
 
-        # ── 2) Accuracy ──
+        # 2) Token‐accuracy
         plt.figure()
-        plt.plot(epochs, h["val_token_accuracy"][:upto],     label="Train acc")
-        plt.plot(epochs, h["val_accuracy"][:upto], label="Val acc")
-        plt.xlabel("Epoch"); plt.ylabel("Accuracy")
-        plt.title(f"Accuracy (1–{upto})"); plt.legend()
+        plt.plot(epochs, h["token_accuracy"][:upto],     label="Train token-acc")
+        plt.plot(epochs, h["val_token_accuracy"][:upto], label="Val token-acc")
+        plt.xlabel("Epoch"); plt.ylabel("Token Accuracy")
+        plt.title(f"Token Accuracy (1–{upto})"); plt.legend()
         plt.tight_layout()
-        plt.savefig(os.path.join(self.save_dir, f"acc_1to{upto}{suffix}.png"))
+        plt.savefig(os.path.join(self.save_dir, f"token_acc_1to{upto}{suffix}.png"))
         plt.close()
 
-        # ── 3) Token accuracy ──
-        if "val_token_accuracy" in h:
-            plt.figure()
-            plt.plot(epochs, h["val_token_accuracy"][:upto], label="Val token acc")
-            plt.xlabel("Epoch"); plt.ylabel("Token Accuracy")
-            plt.title(f"Token Accuracy (1–{upto})"); plt.legend()
-            plt.tight_layout()
-            plt.savefig(os.path.join(self.save_dir, f"token_acc_1to{upto}{suffix}.png"))
-            plt.close()
-
-        # ── 4) ROUGE ──
+        # 3) ROUGE
         if "val_rouge1" in h:
             plt.figure()
             plt.plot(epochs, h["val_rouge1"][:upto], label="ROUGE-1")
@@ -256,6 +252,7 @@ class SnapshotCallback(Callback):
 
     def _plot_resources(self, upto, suffix):
         epochs = range(1, upto + 1)
+
         # CPU & RAM
         plt.figure()
         plt.plot(epochs, self.cpu_usage[:upto], label="CPU %")
@@ -266,12 +263,12 @@ class SnapshotCallback(Callback):
         plt.savefig(os.path.join(self.save_dir, f"cpu_ram_1to{upto}{suffix}.png"))
         plt.close()
 
-        # per-GPU
-        for i, util_list in self.gpu_usage.items():
+        # Per-GPU
+        for i, util in self.gpu_usage.items():
             plt.figure()
-            plt.plot(epochs, util_list[:upto], label=f"GPU{i} %")
+            plt.plot(epochs, util[:upto], label=f"GPU{i} %")
             plt.xlabel("Epoch"); plt.ylabel("GPU Util %")
-            plt.title(f"GPU {i} (1–{upto})")
+            plt.title(f"GPU {i} (1–{upto})"); plt.legend()
             plt.tight_layout()
             plt.savefig(os.path.join(self.save_dir, f"gpu{i}_1to{upto}{suffix}.png"))
             plt.close()
@@ -280,23 +277,19 @@ class SnapshotCallback(Callback):
         # record resources
         self.cpu_usage.append(psutil.cpu_percent())
         self.ram_usage.append(psutil.virtual_memory().percent)
-        gpu_vals = self._get_gpu_utils()
-        for i, u in enumerate(gpu_vals):
-            self.gpu_usage.setdefault(i, []).append(u)
+        for idx, u in enumerate(self._get_gpu_utils()):
+            self.gpu_usage.setdefault(idx, []).append(u)
 
-        current = epoch + 1
-        if current % self.interval == 0:
-            # snapshot everything up through this epoch
-            suffix = f"_ep{current}"
-            self._plot_metrics(current, suffix)
-            self._plot_resources(current, suffix)
+        if (epoch + 1) % self.interval == 0:
+            suffix = f"_ep{epoch+1}"
+            self._plot_metrics(epoch+1, suffix)
+            self._plot_resources(epoch+1, suffix)
 
     def on_train_end(self, logs=None):
         total = len(self.model.history.history["loss"])
-        # final full-range plots
         self._plot_metrics(total, "_final")
         self._plot_resources(total, "_final")
-        print(f"All snapshots saved under {self.save_dir}")
+
 
 class SamplePrediction(Callback):
     def __init__(self, val_ds, tokenizer, max_len, samples=3):
