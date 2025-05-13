@@ -142,17 +142,6 @@ def plot_history(hist, save_dir):
     plt.savefig(loss_path)
     plt.close()
 
-    # ── 2) Accuracy curve ──
-    plt.figure()
-    plt.plot(epochs, hist.history['accuracy'],     label='Train acc')
-    plt.plot(epochs, hist.history['val_accuracy'], label='Val acc')
-    plt.xlabel('Epoch'); plt.ylabel('Accuracy')
-    plt.title('Training and Validation Accuracy')
-    plt.legend()
-    acc_path = os.path.join(save_dir, 'accuracy_curve.png')
-    plt.savefig(acc_path)
-    plt.close()
-
     # ── 3) Token‐accuracy curve ──
     if 'val_token_accuracy' in hist.history:
         plt.figure()
