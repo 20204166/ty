@@ -4,9 +4,8 @@ os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 import tensorflow as tf
 
 from tensorflow.keras.mixed_precision import Policy, set_global_policy
-
-
 set_global_policy(Policy("mixed_float16"))
+
 
 
 gpus = tf.config.list_physical_devices("GPU")
@@ -39,7 +38,7 @@ from tensorflow.keras.models import Model, load_model
 from tensorflow.keras.layers import Input, Embedding, Dense, Concatenate, Attention, LSTMCell
 from tensorflow.keras.preprocessing.text import Tokenizer
 from tensorflow.keras.preprocessing.sequence import pad_sequences
-from tensorflow.keras.callbacks import EarlyStopping, Callback, ReduceLROnPlateau
+from tensorflow.keras.callbacks import EarlyStopping, Callback
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.utils import plot_model 
 from tensorflow.keras.optimizers.schedules import ExponentialDecay  
@@ -123,20 +122,7 @@ def build_seq2seq_model(vocab_in, vocab_tgt, emb_dim, max_in, max_tgt):
     outputs = Dense(vocab_tgt, activation='softmax', name="decoder_dense")(concat)
 
     model = Model([enc_inputs, dec_inputs], outputs)
-    lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
-        initial_learning_rate=3e-4,
-        decay_steps=20000,
-        decay_rate=0.98,
-        staircase=True
-    )
-    model.compile(
-        optimizer=Adam(learning_rate=lr_schedule),
-        loss="sparse_categorical_crossentropy",
-        metrics=[
-            "accuracy",
-            tf.keras.metrics.SparseCategoricalAccuracy(name="token_accuracy")
-        ]
-    )
+   
     return model
 
 def plot_history(hist, save_dir):
@@ -353,55 +339,44 @@ class RougeCallback(Callback):
             ['rouge1','rouge2','rougeL'], use_stemmer=True
         )
         self.n_samples  = n_samples
-
+        
     def on_epoch_end(self, epoch, logs=None):
         logs = logs or {}
+        (enc_batch, _), dec_tgt_batch = next(iter(self.val_ds))
         total = {'rouge1': 0.0, 'rouge2': 0.0, 'rougeL': 0.0}
+        batch = tf.shape(enc_batch)[0]
+
+        dec_input = tf.fill([batch, 1], self.start_id)
+        result    = tf.zeros([batch, 0], dtype=tf.int32)
+        for t in range(self.max_length):
+            pad_amt    = self.max_length - tf.shape(dec_input)[1]
+            dec_padded = tf.pad(dec_input, [[0,0],[0,pad_amt]])
+            logits     = self.model([enc_batch, dec_padded], training=False)
+            next_token = tf.cast(tf.argmax(logits[:, t, :], axis=-1), tf.int32)
+            dec_input  = tf.concat([dec_input, next_token[:, None]], axis=1)
+            result     = tf.concat([result,    next_token[:, None]], axis=1)
+
+   
         count = 0
-
-        for (enc, _), dec_tgt in self.val_ds.take(self.n_samples):
-            # Greedy decode
-            batch     = tf.shape(enc)[0]
-            dec_input = tf.fill([batch,1], self.start_id)
-            result    = tf.zeros([batch, 0], dtype=tf.int32)
-
-            for t in range(self.max_length):
-                pad_amt    = self.max_length - tf.shape(dec_input)[1]
-                dec_padded = tf.pad(dec_input, [[0,0],[0,pad_amt]], constant_values=0)
-
-                logits     = self.model([enc, dec_padded], training=False)
-                next_token = tf.cast(tf.argmax(logits[:, t, :], axis=-1), tf.int32)
-                dec_input  = tf.concat([dec_input, next_token[:,None]], axis=1)
-                result     = tf.concat([result,    next_token[:,None]], axis=1)
-
-            # **Here's the scoring loop you need:**
-            for ref_seq, pred_seq in zip(dec_tgt.numpy(), result.numpy()):
-                # strip pad/<start>/<end>
-                def clean(seq):
-                    return [w for w in seq
-                            if w>0 and w!=self.start_id and w!=self.end_id]
-
-                ref_txt  = " ".join(self.tokenizer.index_word[w] for w in clean(ref_seq))
-                pred_txt = " ".join(self.tokenizer.index_word.get(w, "") for w in clean(pred_seq))
-
-                sc = self.scorer.score(ref_txt, pred_txt)
-                total['rouge1'] += sc['rouge1'].fmeasure
-                total['rouge2'] += sc['rouge2'].fmeasure
-                total['rougeL'] += sc['rougeL'].fmeasure
-                count += 1
-
-        # compute averages
+        for ref_seq, pred_seq in zip(dec_tgt_batch.numpy(), result.numpy()):
+            ref_txt  = " ".join(
+                self.tokenizer.index_word[w]
+                for w in ref_seq 
+                if w not in (0, self.start_id, self.end_id)
+                )
+            pred_txt = " ".join(
+                self.tokenizer.index_word.get(w, "") 
+                for w in pred_seq 
+                if w not in (0, self.start_id, self.end_id)
+                )
+            sc = self.scorer.score(ref_txt, pred_txt)
+            total['rouge1'] += sc['rouge1'].fmeasure
+            total['rouge2'] += sc['rouge2'].fmeasure
+            total['rougeL'] += sc['rougeL'].fmeasure
+            count += 1
         avg = {k: (total[k] / count if count else 0.0) for k in total}
-
-        # inject into logs so other callbacks (EarlyStopping, SaveOnAnyImprovement) can see them
-        logs['val_rouge1'] = avg['rouge1']
-        logs['val_rouge2'] = avg['rouge2']
-        logs['val_rougeL'] = avg['rougeL']
-
-        # print for visibility
-        print(f"Epoch {epoch+1}: ROUGE-1 {avg['rouge1']:.4f}, "
-              f"ROUGE-2 {avg['rouge2']:.4f}, ROUGE-L {avg['rougeL']:.4f}")
-
+        logs.update({f'val_{k}': v for k, v in avg.items()})
+    
 
 class SaveOnAnyImprovement(tf.keras.callbacks.Callback):
     def __init__(self, filepath):
@@ -495,8 +470,7 @@ def train_model(data_path, epochs=25, batch_size=120, emb_dim=50, train_from_scr
     vs_in  = min(len(tok_in.word_index)  + 1, MAX_VOCAB+1)
     vs_tgt = min(len(tok_tgt.word_index) + 1, MAX_VOCAB+1)
 
-    from tensorflow.keras import mixed_precision
-    mixed_precision.set_global_policy('mixed_float16')
+    
 
     train_enc = preprocess_texts(train_in, tok_in,  max_length_input,  vs_in)
     train_dec = preprocess_texts(train_tgt, tok_tgt, max_length_target, vs_tgt)
@@ -506,16 +480,18 @@ def train_model(data_path, epochs=25, batch_size=120, emb_dim=50, train_from_scr
     val_dec = preprocess_texts(val_tgt, tok_tgt, max_length_target, vs_tgt)
     val_dec_in, val_dec_tgt = prepare_decoder_sequences(val_dec)
 
+
+    num_train = len(train_enc)
+    steps_per_epoch = max(1, num_train // batch_size)
     train_ds = (
         tf.data.Dataset
-          .from_tensor_slices(((train_enc, train_dec_in), train_dec_tgt))
-          .shuffle(1000)
-          .cache()
-          .repeat()
-          .batch(batch_size, drop_remainder=True) 
-          .map(lambda x, y: (x, y), num_parallel_calls=tf.data.AUTOTUNE)
-          .prefetch(tf.data.AUTOTUNE)
-
+        .from_tensor_slices(((train_enc, train_dec_in), train_dec_tgt))
+        .take(len(train_enc)) 
+        .cache()
+        .repeat()
+        .shuffle(1000)
+        .batch(batch_size, drop_remainder=True)
+        .prefetch(tf.data.AUTOTUNE)
     )
 
     val_ds = (
@@ -526,13 +502,14 @@ def train_model(data_path, epochs=25, batch_size=120, emb_dim=50, train_from_scr
     )
     n_rouge = 10
     rouge_ds = (
-        tf.data.Dataset.from_tensor_slices(((val_enc, val_dec_in), val_dec_tgt))
-          .take(n_rouge)   
-          .cache()         
-          .repeat()        
-          .batch(batch_size, drop_remainder=True) 
-          .prefetch(tf.data.AUTOTUNE)
+        tf.data.Dataset
+        .from_tensor_slices(((val_enc, val_dec_in), val_dec_tgt))
+        .shuffle(len(val_enc))             
+        .take(n_rouge)                     
+        .batch(n_rouge, drop_remainder=False) 
+        .prefetch(tf.data.AUTOTUNE)
     )
+
 
     
     strategy = tf.distribute.MirroredStrategy()
@@ -551,9 +528,18 @@ def train_model(data_path, epochs=25, batch_size=120, emb_dim=50, train_from_scr
             vs_in, vs_tgt, emb_dim,
             max_length_input, max_length_target
             )
+
+        lr_schedule = ExponentialDecay(
+            initial_learning_rate=3e-4,
+            decay_steps=20_000,
+            decay_rate=0.98,
+            staircase=True
+            )
+
         
 
-        opt = tf.keras.optimizers.Adam(learning_rate=3e-4)
+        base_opt = Adam(learning_rate=lr_schedule)
+        opt = tf.keras.mixed_precision.LossScaleOptimizer(base_opt)
 
 
         model.compile(
@@ -564,10 +550,13 @@ def train_model(data_path, epochs=25, batch_size=120, emb_dim=50, train_from_scr
                 ]
                 
             )
+        print(">>> Global policy:", tf.keras.mixed_precision.global_policy().name)
+        print(">>> Optimizer class:", type(model.optimizer).__name__)
 
 
 
-        total_epochs = epochs
+
+     
         snap_cb = SnapshotCallback(
             save_dir="app/models/saved_model/plots",
             interval_epochs=10
@@ -600,6 +589,7 @@ def train_model(data_path, epochs=25, batch_size=120, emb_dim=50, train_from_scr
             epochs=epochs,
             verbose=2,
             callbacks=callbacks,
+            steps_per_epoch=steps_per_epoch,
             validation_data=val_ds
             )
 
