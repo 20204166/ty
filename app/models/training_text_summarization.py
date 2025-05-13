@@ -208,6 +208,8 @@ class SnapshotCallback(Callback):
 
     def _plot_metrics(self, upto, suffix):
         h = self.model.history.history
+        max_epoch = len(h["loss"])
+        upto = min(upto, max_epoch)
         epochs = range(1, upto + 1)
 
         # ── 1) Loss ──
