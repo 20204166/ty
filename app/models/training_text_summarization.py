@@ -3,6 +3,12 @@ os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 
 import tensorflow as tf
 
+from tensorflow.keras.mixed_precision import Policy, set_global_policy
+
+
+set_global_policy(Policy("mixed_float16"))
+
+
 gpus = tf.config.list_physical_devices("GPU")
 if gpus:
     for gpu in gpus:
@@ -124,9 +130,12 @@ def build_seq2seq_model(vocab_in, vocab_tgt, emb_dim, max_in, max_tgt):
         staircase=True
     )
     model.compile(
-        Adam(learning_rate=lr_schedule),
-        loss='sparse_categorical_crossentropy',
-        metrics=['accuracy', tf.keras.metrics.SparseCategoricalAccuracy(name='token_accuracy')]
+        optimizer=Adam(learning_rate=lr_schedule),
+        loss="sparse_categorical_crossentropy",
+        metrics=[
+            "accuracy",
+            tf.keras.metrics.SparseCategoricalAccuracy(name="token_accuracy")
+        ]
     )
     return model
 
@@ -458,7 +467,7 @@ class CustomEval(Callback):
         print(f"Validation token accuracy: {token_acc:.4f}")
 
 
-def train_model(data_path, epochs=50, batch_size=460, emb_dim=50, train_from_scratch = False):
+def train_model(data_path, epochs=50, batch_size=520, emb_dim=50, train_from_scratch = True):
     inputs, targets = load_training_data(data_path)
     split = int(0.9 * len(inputs))
     save_dir     = "app/models/saved_model"
@@ -502,6 +511,7 @@ def train_model(data_path, epochs=50, batch_size=460, emb_dim=50, train_from_scr
           .from_tensor_slices(((train_enc, train_dec_in), train_dec_tgt))
           .shuffle(1000)
           .cache()
+          .repeat()
           .batch(batch_size, drop_remainder=True) 
           .map(lambda x, y: (x, y), num_parallel_calls=tf.data.AUTOTUNE)
           .prefetch(tf.data.AUTOTUNE)
@@ -541,6 +551,21 @@ def train_model(data_path, epochs=50, batch_size=460, emb_dim=50, train_from_scr
             vs_in, vs_tgt, emb_dim,
             max_length_input, max_length_target
             )
+        
+
+        opt = tf.keras.optimizers.Adam(learning_rate=3e-4)
+
+
+        model.compile(
+            optimizer=opt,
+            loss="sparse_categorical_crossentropy",
+            metrics=[
+                tf.keras.metrics.SparseCategoricalAccuracy(name="token_accuracy")
+                ]
+                
+            )
+
+
 
         total_epochs = epochs
         snap_cb = SnapshotCallback(
