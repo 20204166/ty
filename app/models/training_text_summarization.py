@@ -124,7 +124,7 @@ def build_seq2seq_model(vocab_in, vocab_tgt, emb_dim, max_in, max_tgt):
 
     model = Model([enc_inputs, dec_inputs], outputs)
     lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
-        initial_learning_rate=1e-3,
+        initial_learning_rate=3e-4,
         decay_steps=20000,
         decay_rate=0.98,
         staircase=True
