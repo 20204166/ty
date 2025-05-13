@@ -458,7 +458,7 @@ class CustomEval(Callback):
         print(f"Validation token accuracy: {token_acc:.4f}")
 
 
-def train_model(data_path, epochs=35, batch_size=120, emb_dim=50, train_from_scratch = False):
+def train_model(data_path, epochs=50, batch_size=120, emb_dim=50, train_from_scratch = False):
     inputs, targets = load_training_data(data_path)
     split = int(0.9 * len(inputs))
     save_dir     = "app/models/saved_model"
@@ -556,13 +556,6 @@ def train_model(data_path, epochs=35, batch_size=120, emb_dim=50, train_from_scr
         )
 
         save_cb  = SaveOnAnyImprovement(model_path)
-        reduce_lr = ReduceLROnPlateau(
-            monitor='val_loss',
-            factor=0.5,
-            patience=2,
-            min_lr=1e-5,
-            verbose=1
-        )
 
         callbacks = [
             rouge_cb,
@@ -574,8 +567,8 @@ def train_model(data_path, epochs=35, batch_size=120, emb_dim=50, train_from_scr
                 ),
                 save_cb,
                 custom_eval_cb,
-                snap_cb,
-                reduce_lr
+                snap_cb
+               
         ]
         history = model.fit(
             train_ds,
