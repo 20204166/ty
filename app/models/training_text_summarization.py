@@ -122,7 +122,24 @@ def build_seq2seq_model(vocab_in, vocab_tgt, emb_dim, max_in, max_tgt):
     outputs = Dense(vocab_tgt, activation='softmax', name="decoder_dense")(concat)
 
     model = Model([enc_inputs, dec_inputs], outputs)
+<<<<<<< HEAD
    
+=======
+    lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
+        initial_learning_rate=0.001,
+        decay_steps=20000,
+        decay_rate=0.98,
+        staircase=True
+    )
+    model.compile(
+        optimizer=Adam(learning_rate=lr_schedule),
+        loss="sparse_categorical_crossentropy",
+        metrics=[
+            "accuracy",
+            tf.keras.metrics.SparseCategoricalAccuracy(name="token_accuracy")
+        ]
+    )
+>>>>>>> f111e35faea55c57124843736a91550341d07dbc
     return model
 
 def plot_history(hist, save_dir):
@@ -442,7 +459,7 @@ class CustomEval(Callback):
         print(f"Validation token accuracy: {token_acc:.4f}")
 
 
-def train_model(data_path, epochs=25, batch_size=120, emb_dim=50, train_from_scratch = True):
+def train_model(data_path, epochs=25, batch_size=460, emb_dim=50, train_from_scratch = True):
     inputs, targets = load_training_data(data_path)
     split = int(0.9 * len(inputs))
     save_dir     = "app/models/saved_model"
@@ -485,6 +502,7 @@ def train_model(data_path, epochs=25, batch_size=120, emb_dim=50, train_from_scr
     steps_per_epoch = max(1, num_train // batch_size)
     train_ds = (
         tf.data.Dataset
+<<<<<<< HEAD
         .from_tensor_slices(((train_enc, train_dec_in), train_dec_tgt))
         .take(len(train_enc)) 
         .cache()
@@ -492,6 +510,15 @@ def train_model(data_path, epochs=25, batch_size=120, emb_dim=50, train_from_scr
         .shuffle(1000)
         .batch(batch_size, drop_remainder=True)
         .prefetch(tf.data.AUTOTUNE)
+=======
+          .from_tensor_slices(((train_enc, train_dec_in), train_dec_tgt))
+          .shuffle(1000)
+          .cache()
+          .batch(batch_size, drop_remainder=True) 
+          .map(lambda x, y: (x, y), num_parallel_calls=tf.data.AUTOTUNE)
+          .prefetch(tf.data.AUTOTUNE)
+
+>>>>>>> f111e35faea55c57124843736a91550341d07dbc
     )
 
     val_ds = (
