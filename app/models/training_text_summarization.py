@@ -489,7 +489,7 @@ def train_model(data_path, epochs=30, batch_size=240, emb_dim=50, train_from_scr
         .take(len(train_enc)) 
         .cache()
         .repeat()
-        .shuffle(1000)
+        .shuffle(buffer_size=steps_per_epoch)
         .batch(batch_size, drop_remainder=True)
         .prefetch(tf.data.AUTOTUNE)
     )
@@ -500,7 +500,7 @@ def train_model(data_path, epochs=30, batch_size=240, emb_dim=50, train_from_scr
           .batch(batch_size, drop_remainder=True) 
           .prefetch(tf.data.AUTOTUNE)
     )
-    n_rouge = 10
+    n_rouge = 100
     rouge_ds = (
         tf.data.Dataset
         .from_tensor_slices(((val_enc, val_dec_in), val_dec_tgt))
