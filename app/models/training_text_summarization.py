@@ -224,7 +224,7 @@ class SnapshotCallback(Callback):
 
         # ── 2) Accuracy ──
         plt.figure()
-        plt.plot(epochs, h["accuracy"][:upto],     label="Train acc")
+        plt.plot(epochs, h["val_token_accuracy"][:upto],     label="Train acc")
         plt.plot(epochs, h["val_accuracy"][:upto], label="Val acc")
         plt.xlabel("Epoch"); plt.ylabel("Accuracy")
         plt.title(f"Accuracy (1–{upto})"); plt.legend()
