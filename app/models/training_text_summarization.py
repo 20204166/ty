@@ -511,7 +511,6 @@ def train_model(data_path, epochs=25, batch_size=460, emb_dim=50, train_from_scr
           .from_tensor_slices(((train_enc, train_dec_in), train_dec_tgt))
           .shuffle(1000)
           .cache()
-          .repeat()
           .batch(batch_size, drop_remainder=True) 
           .map(lambda x, y: (x, y), num_parallel_calls=tf.data.AUTOTUNE)
           .prefetch(tf.data.AUTOTUNE)
