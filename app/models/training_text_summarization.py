@@ -183,13 +183,6 @@ def plot_history(hist, save_dir):
           *(os.path.basename(tok_path) if 'tok_path' in locals() else []),
           *(os.path.basename(rouge_path) if 'rouge_path' in locals() else []))
 
-
-import os
-import subprocess
-import psutil
-import matplotlib.pyplot as plt
-from tensorflow.keras.callbacks import Callback
-
 class SnapshotCallback(Callback):
     def __init__(self, save_dir, interval_epochs=10):
         super().__init__()
