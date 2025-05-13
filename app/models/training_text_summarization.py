@@ -183,6 +183,8 @@ def plot_history(hist, save_dir):
           *(os.path.basename(tok_path) if 'tok_path' in locals() else []),
           *(os.path.basename(rouge_path) if 'rouge_path' in locals() else []))
 
+
+
 class SnapshotCallback(Callback):
     def __init__(self, save_dir, interval_epochs=10):
         super().__init__()
@@ -200,20 +202,18 @@ class SnapshotCallback(Callback):
                 "--query-gpu=utilization.gpu",
                 "--format=csv,noheader,nounits"
             ])
-            lines = raw.decode().strip().splitlines()
-            return [float(l) for l in lines if l.strip()]
+            return [float(l) for l in raw.decode().splitlines() if l.strip()]
         except Exception:
             return []
 
     def _plot_metrics(self, upto, suffix):
         h = self.model.history.history
-        max_epoch = len(h["loss"])
-        upto = min(upto, max_epoch)
+        upto = min(upto, len(h["loss"]))
         epochs = range(1, upto + 1)
 
         # 1) Loss
         plt.figure()
-        plt.plot(epochs, h["loss"][:upto], label="Train loss")
+        plt.plot(epochs, h["loss"][:upto],     label="Train loss")
         plt.plot(epochs, h["val_loss"][:upto], label="Val loss")
         plt.xlabel("Epoch"); plt.ylabel("Loss")
         plt.title(f"Loss (1–{upto})"); plt.legend()
