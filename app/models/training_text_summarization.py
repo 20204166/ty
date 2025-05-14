@@ -544,17 +544,13 @@ def train_model(data_path, epochs=5, batch_size=120, emb_dim=50, train_from_scra
             max_length_target=max_length_target,
             n_samples=n_rouge
         )
-        custom_eval_cb = CustomEval(
-            val_ds=val_ds,
-            strategy=strategy
-        )
+
         
 
         save_cb  = SaveOnAnyImprovement(model_path)
 
         callbacks = [
             rouge_cb,
-            custom_eval_cb,
             EarlyStopping(
                 monitor='val_rouge1',   
                 mode='max',
