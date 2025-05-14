@@ -126,32 +126,38 @@ def build_seq2seq_model(vocab_in, vocab_tgt, emb_dim, max_in, max_tgt):
     model = Model([enc_inputs, dec_inputs], outputs)
    
     return model
-
-def plot_history(self, upto, suffix):
-    h = self.model.history.history
+    
+def plot_history(history, save_dir):
+    h = history.history
     keys = h.keys()
+    epochs = range(1, len(h.get("loss", [])) + 1)
+
+    # 1) Loss
+    plt.figure()
+    plt.plot(epochs, h["loss"],     label="Train loss")
+    plt.plot(epochs, h["val_loss"], label="Val loss")
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.title("Training vs. Validation Loss")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(os.path.join(save_dir, "loss_full.png"))
+    plt.close()
+
+    # 2) Accuracy
     acc_key     = "token_accuracy" if "token_accuracy" in keys else "sparse_categorical_accuracy"
     val_acc_key = "val_" + acc_key
 
-    epochs = range(1, upto + 1)
-
-    # Loss (unchanged)…
     plt.figure()
-    plt.plot(epochs, h["loss"][:upto],     label="Train loss")
-    plt.plot(epochs, h["val_loss"][:upto], label="Val loss")
-    plt.legend(); plt.tight_layout()
-    plt.savefig(os.path.join(self.save_dir, f"loss_1to{upto}{suffix}.png"))
+    plt.plot(epochs, h[acc_key],     label="Train acc")
+    plt.plot(epochs, h[val_acc_key], label="Val acc")
+    plt.xlabel("Epoch")
+    plt.ylabel("Accuracy")
+    plt.title("Training vs. Validation Accuracy")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(os.path.join(save_dir, "acc_full.png"))
     plt.close()
-
-    # Dynamic accuracy
-    plt.figure()
-    plt.plot(epochs, h[acc_key][:upto],     label="Train acc")
-    plt.plot(epochs, h[val_acc_key][:upto], label="Val acc")
-    plt.legend(); plt.tight_layout()
-    plt.savefig(os.path.join(self.save_dir, f"acc_1to{upto}{suffix}.png"))
-    plt.close()
-
-    # ROUGE (unchanged)…
 
 
 
@@ -539,12 +545,17 @@ def train_model(data_path, epochs=5, batch_size=120, emb_dim=50, train_from_scra
             max_length_target=max_length_target,
             n_samples=n_rouge
         )
+        custom_eval_cb = CustomEval(
+            val_ds=val_ds,
+            strategy=strategy
+        )
         
 
         save_cb  = SaveOnAnyImprovement(model_path)
 
         callbacks = [
             rouge_cb,
+            custom_eval_cb,
             EarlyStopping(
                 monitor='val_rouge1',   
                 mode='max',
@@ -552,8 +563,7 @@ def train_model(data_path, epochs=5, batch_size=120, emb_dim=50, train_from_scra
                 restore_best_weights=True
                 ),
                 save_cb,
-                snap_cb
-                
+                snap_cb,         
         ]
         history = model.fit(
             train_ds,
