@@ -418,7 +418,7 @@ class CustomEval(Callback):
         print(f"Validation token accuracy: {token_acc:.4f}")
 
 
-def train_model(data_path, epochs=70, batch_size=64, emb_dim=50, train_from_scratch = True):
+def train_model(data_path, epochs=70, batch_size=128, emb_dim=50, train_from_scratch = True):
     inputs, targets = load_training_data(data_path)
     split = int(0.9 * len(inputs))
     save_dir     = "app/models/saved_model"
