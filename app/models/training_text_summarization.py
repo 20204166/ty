@@ -473,7 +473,7 @@ def train_model(data_path, epochs=5, batch_size=120, emb_dim=50, train_from_scra
           .prefetch(tf.data.AUTOTUNE)
     )
     
-    n_rouge = 50
+    n_rouge = 20
     rouge_ds = (
         tf.data.Dataset
         .from_tensor_slices(((val_enc, val_dec_in), val_dec_tgt))
