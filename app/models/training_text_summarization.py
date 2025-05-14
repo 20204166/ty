@@ -126,30 +126,48 @@ def build_seq2seq_model(vocab_in, vocab_tgt, emb_dim, max_in, max_tgt):
     return model
 
 def plot_history(hist, save_dir):
-    import os
-    import matplotlib.pyplot as plt
-
+    os.makedirs(save_dir, exist_ok=True)
     epochs = range(1, len(hist.history["loss"]) + 1)
 
-    # ── 4) ROUGE curves ──
+    # Loss curve
+    plt.figure()
+    plt.plot(epochs, hist.history["loss"], label="Training Loss")
+    plt.plot(epochs, hist.history["val_loss"], label="Validation Loss")
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.title("Loss Curve")
+    plt.legend()
+    loss_path = os.path.join(save_dir, "loss_curve.png")
+    plt.savefig(loss_path)
+    plt.close()
+
+    # Accuracy curve
+    plt.figure()
+    plt.plot(epochs, hist.history["token_accuracy"], label="Training Token Accuracy")
+    plt.plot(epochs, hist.history["val_token_accuracy"], label="Validation Token Accuracy")
+    plt.xlabel("Epoch")
+    plt.ylabel("Token Accuracy")
+    plt.title("Token Accuracy Curve")
+    plt.legend()
+    acc_path = os.path.join(save_dir, "accuracy_curve.png")
+    plt.savefig(acc_path)
+    plt.close()
+
+    # ROUGE curves
     if "val_rouge1" in hist.history:
         plt.figure()
         plt.plot(epochs, hist.history["val_rouge1"], label="ROUGE-1 F1")
         plt.plot(epochs, hist.history["val_rouge2"], label="ROUGE-2 F1")
         plt.plot(epochs, hist.history["val_rougeL"], label="ROUGE-L F1")
-        plt.xlabel("Epoch"); plt.ylabel("F1 Score")
+        plt.xlabel("Epoch")
+        plt.ylabel("F1 Score")
         plt.title("Validation ROUGE Scores")
         plt.legend()
         rouge_path = os.path.join(save_dir, "rouge_curve.png")
         plt.savefig(rouge_path)
         plt.close()
 
-    print("Saved plots to", save_dir,
-          os.path.basename(loss_path),
-          os.path.basename(acc_path),
-          *(os.path.basename(tok_path) if "tok_path" in locals() else []),
-          *(os.path.basename(rouge_path) if "rouge_path" in locals() else []))
-
+    print("Saved plots to", save_dir)
 
 
 class SnapshotCallback(Callback):
@@ -250,39 +268,37 @@ class SnapshotCallback(Callback):
         self._plot_metrics(total, "_final")
         self._plot_resources(total, "_final")
 
-
 class SamplePrediction(Callback):
     def __init__(self, val_ds, tokenizer, max_len, samples=3):
         super().__init__()
-        self.val_ds      = val_ds.take(1).unbatch().batch(samples)
-        self.tokenizer   = tokenizer
-        self.start_id    = tokenizer.word_index['<start>']
-        self.end_id      = tokenizer.word_index['<end>']
-        self.max_length  = max_len
+        self.val_ds = val_ds.take(1).unbatch().batch(samples)
+        self.tokenizer = tokenizer
+        self.start_id = tokenizer.word_index['<start>']
+        self.end_id = tokenizer.word_index['<end>']
+        self.max_length = max_len
 
     def on_epoch_end(self, epoch, logs=None):
-        logs = logs or {}
-        (enc, _), dec_tgt = next(iter(self.val_ds))
-        # greedy decode:
-        dec_in  = tf.fill([enc.shape[0], 1], self.start_id)
-        result  = []
-        for t in range(self.max_length):
-            pad = self.max_length - tf.shape(dec_in)[1]
-            logits = self.model([enc, tf.pad(dec_in, [[0,0],[0,pad]])], training=False)
-            next_tok = tf.argmax(logits[:, t, :], axis=-1, output_type=tf.int32)
-            dec_in  = tf.concat([dec_in, next_tok[:,None]], axis=1)
-        preds = dec_in[:,1:].numpy()
-
         print(f"\n—— Sample predictions after epoch {epoch+1} ——")
-        for i in range(enc.shape[0]):
-            ref_seq = dec_tgt[i].numpy()
-            ref     = " ".join(self.tokenizer.index_word.get(w, "") 
+        for (enc, _), dec_tgt in self.val_ds:
+            dec_in = tf.fill([enc.shape[0], 1], self.start_id)
+            result = []
+            for _ in range(self.max_length):
+                pad = self.max_length - dec_in.shape[1]
+                logits = self.model([enc, tf.pad(dec_in, [[0,0],[0,pad]])], training=False)
+                next_tok = tf.argmax(logits[:, -1, :], axis=-1, output_type=tf.int32)
+                dec_in = tf.concat([dec_in, next_tok[:,None]], axis=1)
+                result.append(next_tok)
+            preds = tf.stack(result, axis=1).numpy()
+
+            for i in range(enc.shape[0]):
+                ref_seq = dec_tgt[i].numpy()
+                ref = " ".join(self.tokenizer.index_word.get(w, "<OOV>")
                                for w in ref_seq if w not in (0, self.start_id, self.end_id))
-            pred_seq = preds[i]
-            pred     = " ".join(self.tokenizer.index_word.get(w, "") 
+                pred_seq = preds[i]
+                pred = " ".join(self.tokenizer.index_word.get(w, "<OOV>")
                                 for w in pred_seq if w not in (0, self.start_id, self.end_id))
-            print(f"REF:  {ref}\nPRED: {pred}\n")
-  
+                print(f"REF:  {ref}\nPRED: {pred}\n")
+                
 class RougeCallback(Callback):
     def __init__(self, val_ds, tgt_tokenizer, max_length_target, n_samples):
         super().__init__()
@@ -410,23 +426,16 @@ def train_model(data_path, epochs=100, batch_size=120, emb_dim=50, train_from_sc
     
     train_in, train_tgt = inputs[:split], targets[:split]
     val_in, val_tgt = inputs[split:], targets[split:]
-
+    
     if os.path.exists(tok_in_path) and os.path.exists(tok_tgt_path):
-        tok_in  = load_tokenizer(tok_in_path)
+        tok_in = load_tokenizer(tok_in_path)
         tok_tgt = load_tokenizer(tok_tgt_path)
     else:
-        tok_in  = create_tokenizer(inputs,  max_words=MAX_VOCAB)
+        tok_in = create_tokenizer(inputs, max_words=MAX_VOCAB)
         tok_tgt = create_tokenizer(targets, max_words=MAX_VOCAB)
-        with open(tok_in_path, 'w', encoding='utf-8') as f:
-            f.write(tok_in.to_json())
-        with open(tok_tgt_path, 'w', encoding='utf-8') as f:
-            f.write(tok_tgt.to_json())
 
-    # ── RIGHT HERE ── cap vocab sizes so your Dense isn’t huge
-    vs_in  = min(len(tok_in.word_index)  + 1, MAX_VOCAB+1)
-    vs_tgt = min(len(tok_tgt.word_index) + 1, MAX_VOCAB+1)
-
-    
+    vs_in = min(len(tok_in.word_index) + 1, MAX_VOCAB + 1)
+    vs_tgt = min(len(tok_tgt.word_index) + 1, MAX_VOCAB + 1)
 
     train_enc = preprocess_texts(train_in, tok_in,  max_length_input,  vs_in)
     train_dec = preprocess_texts(train_tgt, tok_tgt, max_length_target, vs_tgt)
@@ -453,10 +462,11 @@ def train_model(data_path, epochs=100, batch_size=120, emb_dim=50, train_from_sc
     val_ds = (
         tf.data.Dataset
           .from_tensor_slices(((val_enc, val_dec_in), val_dec_tgt))
-          .batch(batch_size, drop_remainder=True) 
+          .batch(batch_size, drop_remainder=False) 
           .prefetch(tf.data.AUTOTUNE)
     )
-    n_rouge = 50
+    val_ds = val_ds.cache(filename="val_cache")
+    n_rouge = 100
     rouge_ds = (
         tf.data.Dataset
         .from_tensor_slices(((val_enc, val_dec_in), val_dec_tgt))
@@ -465,8 +475,7 @@ def train_model(data_path, epochs=100, batch_size=120, emb_dim=50, train_from_sc
         .batch(n_rouge, drop_remainder=False) 
         .prefetch(tf.data.AUTOTUNE)
     )
-
-
+    rouge_ds = rouge_ds.cache(filename="rouge_cache")
     
     strategy = tf.distribute.MirroredStrategy()
     with strategy.scope(): 
@@ -492,26 +501,17 @@ def train_model(data_path, epochs=100, batch_size=120, emb_dim=50, train_from_sc
             staircase=True
             )
 
-        
-
         base_opt = Adam(learning_rate=lr_schedule)
         opt = tf.keras.mixed_precision.LossScaleOptimizer(base_opt)
-
-
         model.compile(
             optimizer=opt,
             loss="sparse_categorical_crossentropy",
             metrics=[
                 tf.keras.metrics.SparseCategoricalAccuracy(name="token_accuracy")
-                ]
-                
+                ]      
             )
         print(">>> Global policy:", tf.keras.mixed_precision.global_policy().name)
         print(">>> Optimizer class:", type(model.optimizer).__name__)
-
-
-
-
      
         snap_cb = SnapshotCallback(
             save_dir="app/models/saved_model/plots",
@@ -519,12 +519,12 @@ def train_model(data_path, epochs=100, batch_size=120, emb_dim=50, train_from_sc
             )
         custom_eval_cb = CustomEval(val_ds, strategy)
         rouge_cb = RougeCallback(
-            val_ds=rouge_ds,         
+            val_ds=rouge_ds,
             tgt_tokenizer=tok_tgt,         
             max_length_target=max_length_target,
             n_samples=n_rouge
         )
-
+        sample_cb = SamplePrediction(val_ds, tok_tgt, max_length_target, samples=3)
         save_cb  = SaveOnAnyImprovement(model_path)
 
         callbacks = [
@@ -535,10 +535,10 @@ def train_model(data_path, epochs=100, batch_size=120, emb_dim=50, train_from_sc
                 patience=5,
                 restore_best_weights=True
                 ),
-                save_cb,
-                custom_eval_cb,
-                snap_cb
-               
+            save_cb,
+            custom_eval_cb,
+            snap_cb,
+            sample_cb
         ]
         history = model.fit(
             train_ds,
