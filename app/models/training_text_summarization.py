@@ -273,7 +273,7 @@ class SnapshotCallback(Callback):
         self._plot_resources(total, "_final")
         
 class SamplePrediction(Callback):
-    def __init__(self, val_ds, tokenizer, max_len, samples=3):
+    def __init__(self, val_ds, tokenizer, max_len, samples=1):
         super().__init__()
         self.val_ds = val_ds.take(1).unbatch().batch(samples)
         self.tokenizer = tokenizer
@@ -370,7 +370,7 @@ class SaveOnAnyImprovement(tf.keras.callbacks.Callback):
         # scan through all logged metrics
         for name, value in logs.items():
             # only consider validation metrics here
-            if not name.startswith("val_"):
+            if not name.startswith("val_r")or name == "val_token_accuracy"):
                 continue
 
             # decide if higher-is-better or lower-is-better
@@ -418,7 +418,7 @@ class CustomEval(Callback):
         print(f"Validation token accuracy: {token_acc:.4f}")
 
 
-def train_model(data_path, epochs=70, batch_size=128, emb_dim=50, train_from_scratch = False):
+def train_model(data_path, epochs=70, batch_size=64, emb_dim=50, train_from_scratch = True):
     inputs, targets = load_training_data(data_path)
     split = int(0.9 * len(inputs))
     save_dir     = "app/models/saved_model"
@@ -470,15 +470,17 @@ def train_model(data_path, epochs=70, batch_size=128, emb_dim=50, train_from_scr
           .prefetch(tf.data.AUTOTUNE)
     )
     
-    n_rouge = 100
+    n_rouge = 50
     rouge_ds = (
         tf.data.Dataset
         .from_tensor_slices(((val_enc, val_dec_in), val_dec_tgt))
         .shuffle(len(val_enc))             
-        .take(n_rouge)                     
+        .take(n_rouge) 
+        .cache()
         .batch(n_rouge, drop_remainder=False) 
         .prefetch(tf.data.AUTOTUNE)
     )
+    
     
     
     strategy = tf.distribute.MirroredStrategy()
