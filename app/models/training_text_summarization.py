@@ -538,10 +538,10 @@ def train_model(data_path, epochs=100, batch_size=120, emb_dim=50, train_from_sc
                 patience=5,
                 restore_best_weights=True
                 ),
-            save_cb,
-            custom_eval_cb,
-            snap_cb,
-            sample_cb
+                save_cb,
+                custom_eval_cb,
+                snap_cb,
+                sample_cb
         ]
         history = model.fit(
             train_ds,
