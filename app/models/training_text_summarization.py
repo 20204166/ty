@@ -464,7 +464,6 @@ def train_model(data_path, epochs=5, batch_size=120, emb_dim=50, train_from_scra
     train_ds = (
         tf.data.Dataset
         .from_tensor_slices(((train_enc, train_dec_in), train_dec_tgt))
-        .cache()
         .shuffle(buffer_size=steps_per_epoch, seed=42)
         .batch(batch_size, drop_remainder=True)
         .repeat()
@@ -479,13 +478,12 @@ def train_model(data_path, epochs=5, batch_size=120, emb_dim=50, train_from_scra
           .prefetch(tf.data.AUTOTUNE)
     )
     
-    n_rouge = 20
+    n_rouge = 50
     rouge_ds = (
         tf.data.Dataset
         .from_tensor_slices(((val_enc, val_dec_in), val_dec_tgt))
         .shuffle(len(val_enc))            
         .take(n_rouge) 
-        .cache()
         .batch(n_rouge, drop_remainder=False) 
         .prefetch(tf.data.AUTOTUNE)
     )
