@@ -151,7 +151,7 @@ def _plot_metrics(self, upto, suffix):
     plt.close()
 
     # ROUGE (unchanged)…
-    …
+
 
 
 class SnapshotCallback(Callback):
