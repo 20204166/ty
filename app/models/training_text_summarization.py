@@ -72,8 +72,10 @@ def load_training_data(data_path: str):
     return inputs, targets
 
 MAX_VOCAB = 10_000
-def create_tokenizer(texts, oov_token="<OOV>", max_words=MAX_VOCAB):
+def create_tokenizer(texts, oov_token="<OOV>", max_words=MAX_VOCAB, add_special_tokens=False):
     tok = Tokenizer(num_words=max_words, oov_token=oov_token)
+    if add_special_tokens:
+        texts = [f"<start> {t} <end>" for t in texts]
     tok.fit_on_texts(texts)
     return tok
 
