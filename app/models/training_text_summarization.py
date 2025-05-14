@@ -208,7 +208,7 @@ class SnapshotCallback(Callback):
         plt.savefig(os.path.join(self.save_dir, f"loss_1to{upto}{suffix}.png"))
         plt.close()
 
-        # 2) Token‐accuracy
+        # 2) Token‐accuracy (your real metric)
         plt.figure()
         plt.plot(epochs, h["token_accuracy"][:upto],     label="Train token-acc")
         plt.plot(epochs, h["val_token_accuracy"][:upto], label="Val token-acc")
@@ -229,6 +229,8 @@ class SnapshotCallback(Callback):
             plt.tight_layout()
             plt.savefig(os.path.join(self.save_dir, f"rouge_1to{upto}{suffix}.png"))
             plt.close()
+
+
 
     def _plot_resources(self, upto, suffix):
         epochs = range(1, upto + 1)
@@ -468,7 +470,7 @@ def train_model(data_path, epochs=70, batch_size=64, emb_dim=50, train_from_scra
           .prefetch(tf.data.AUTOTUNE)
     )
     
-    n_rouge = 50
+    n_rouge = 100
     rouge_ds = (
         tf.data.Dataset
         .from_tensor_slices(((val_enc, val_dec_in), val_dec_tgt))
