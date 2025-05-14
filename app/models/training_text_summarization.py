@@ -550,7 +550,7 @@ def train_model(data_path, epochs=5, batch_size=256, emb_dim=50, train_from_scra
             max_length_target=max_length_target,
             n_samples=n_rouge
         )
-        self.val_ds = val_ds.take(1).unbatch().batch(samples)
+        
         sample_cb = SamplePrediction(val_ds, tok_tgt, max_length_target, samples=3)
         save_cb  = SaveOnAnyImprovement(model_path)
 
