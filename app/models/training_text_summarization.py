@@ -1,4 +1,5 @@
-im os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+import os
+os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 
 import tensorflow as tf
 
