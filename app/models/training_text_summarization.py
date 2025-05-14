@@ -504,7 +504,7 @@ def train_model(data_path, epochs=5, batch_size=120, emb_dim=50, train_from_scra
             )
 
         lr_schedule = ExponentialDecay(
-            initial_learning_rate=1e-3,
+            initial_learning_rate=1e-4,
             decay_steps=20_000,
             decay_rate=0.98,
             staircase=True
