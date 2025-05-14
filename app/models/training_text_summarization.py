@@ -131,30 +131,8 @@ def plot_history(hist, save_dir):
 
     epochs = range(1, len(hist.history["loss"]) + 1)
 
-    # ── 1) Loss curve ──
-    plt.figure()
-    plt.plot(epochs, hist.history["loss"],     label="Train loss")
-    plt.plot(epochs, hist.history["val_loss"], label="Val loss")
-    plt.xlabel("Epoch"); plt.ylabel("loss")
-    plt.title("Training and Validation Loss')
-    plt.legend()
-    loss_path = os.path.join(save_dir, "loss_curve.png")
-    plt.savefig(loss_path)
-    plt.close()
-
-    # ── 3) Token‐accuracy curve ──
-    if 'val_token_accuracy' in hist.history:
-        plt.figure()
-        plt.plot(epochs, hist.history["val_token_accuracy"], label="Val token-acc")
-        plt.xlabel("Epoch"); plt.ylabel("Token Accuracy")
-        plt.title("Validation Token Accuracy")
-        plt.legend()
-        tok_path = os.path.join(save_dir, "token_accuracy_curve.png")
-        plt.savefig(tok_path)
-        plt.close()
-
     # ── 4) ROUGE curves ──
-    if 'val_rouge1' in hist.history:
+    if "val_rouge1" in hist.history:
         plt.figure()
         plt.plot(epochs, hist.history["val_rouge1"], label="ROUGE-1 F1")
         plt.plot(epochs, hist.history["val_rouge2"], label="ROUGE-2 F1")
