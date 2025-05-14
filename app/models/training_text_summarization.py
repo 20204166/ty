@@ -462,13 +462,15 @@ def train_model(data_path, epochs=5, batch_size=120, emb_dim=50, train_from_scra
         .repeat()
         .shuffle(buffer_size=steps_per_epoch, seed=42)
         .batch(batch_size, drop_remainder=True)
+        .repeat()
         .prefetch(tf.data.AUTOTUNE)
     )
 
     val_ds = (
         tf.data.Dataset
           .from_tensor_slices(((val_enc, val_dec_in), val_dec_tgt))
-          .batch(batch_size, drop_remainder=False) 
+          .batch(batch_size, drop_remainder=False)
+          .repeat()
           .prefetch(tf.data.AUTOTUNE)
     )
     
