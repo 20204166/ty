@@ -416,7 +416,7 @@ class CustomEval(Callback):
         print(f"Validation token accuracy: {token_acc:.4f}")
 
 
-def train_model(data_path, epochs=100, batch_size=120, emb_dim=50, train_from_scratch = False):
+def train_model(data_path, epochs=100, batch_size=120, emb_dim=50, train_from_scratch = True):
     inputs, targets = load_training_data(data_path)
     split = int(0.9 * len(inputs))
     save_dir     = "app/models/saved_model"
@@ -467,7 +467,7 @@ def train_model(data_path, epochs=100, batch_size=120, emb_dim=50, train_from_sc
           .batch(batch_size, drop_remainder=False) 
           .prefetch(tf.data.AUTOTUNE)
     )
-    val_ds = val_ds.cache(filename="val_cache")
+    
     n_rouge = 100
     rouge_ds = (
         tf.data.Dataset
@@ -477,7 +477,7 @@ def train_model(data_path, epochs=100, batch_size=120, emb_dim=50, train_from_sc
         .batch(n_rouge, drop_remainder=False) 
         .prefetch(tf.data.AUTOTUNE)
     )
-    rouge_ds = rouge_ds.cache(filename="rouge_cache")
+    
     
     strategy = tf.distribute.MirroredStrategy()
     with strategy.scope(): 
