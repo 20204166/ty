@@ -127,7 +127,7 @@ def build_seq2seq_model(vocab_in, vocab_tgt, emb_dim, max_in, max_tgt):
    
     return model
 
-def _plot_metrics(self, upto, suffix):
+def history(self, upto, suffix):
     h = self.model.history.history
     keys = h.keys()
     acc_key     = "token_accuracy" if "token_accuracy" in keys else "sparse_categorical_accuracy"
