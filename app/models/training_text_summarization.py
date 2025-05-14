@@ -519,6 +519,12 @@ def train_model(data_path, epochs=5, batch_size=256, emb_dim=50, train_from_scra
                 tf.keras.metrics.SparseCategoricalAccuracy(name="token_accuracy")
                 ]      
             )
+        (enc_batch, dec_in_batch), dec_tgt_batch = next(iter(train_ds))
+        logits = model([enc_batch, dec_in_batch], training=False)
+        print("Output logits stats:",
+              tf.reduce_min(logits).numpy(),
+              tf.reduce_max(logits).numpy(),
+              "any NaN?", tf.reduce_any(tf.math.is_nan(logits)).numpy())
         print(">>> Global policy:", tf.keras.mixed_precision.global_policy().name)
         print(">>> Optimizer class:", type(model.optimizer).__name__)
      
