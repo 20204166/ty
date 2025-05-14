@@ -543,7 +543,6 @@ def train_model(data_path, epochs=5, batch_size=256, emb_dim=50, train_from_scra
             save_dir="app/models/saved_model/plots",
             interval_epochs=10
             )
-        custom_eval_cb = CustomEval(val_ds, strategy)
         rouge_cb = RougeCallback(
             val_ds=rouge_ds,
             tgt_tokenizer=tok_tgt,         
@@ -563,8 +562,7 @@ def train_model(data_path, epochs=5, batch_size=256, emb_dim=50, train_from_scra
                 restore_best_weights=True
                 ),
                 save_cb,
-                custom_eval_cb,
-                snap_cb,
+                snap_cb
                 
         ]
         history = model.fit(
