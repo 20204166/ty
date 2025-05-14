@@ -273,8 +273,8 @@ class SamplePrediction(Callback):
         super().__init__()
         self.val_ds = val_ds.take(1).unbatch().batch(samples)
         self.tokenizer = tokenizer
-        self.start_id = tokenizer.word_index['<start>']
-        self.end_id = tokenizer.word_index['<end>']
+        self.start_id   = tgt_tokenizer.word_index.get('<start>', tgt_tokenizer.word_index[tgt_tokenizer.oov_token])
+        self.end_id     = tgt_tokenizer.word_index.get('<end>',   tgt_tokenizer.word_index[tgt_tokenizer.oov_token])
         self.max_length = max_len
 
     def on_epoch_end(self, epoch, logs=None):
@@ -431,8 +431,8 @@ def train_model(data_path, epochs=100, batch_size=120, emb_dim=50, train_from_sc
         tok_in = load_tokenizer(tok_in_path)
         tok_tgt = load_tokenizer(tok_tgt_path)
     else:
-        tok_in = create_tokenizer(inputs, max_words=MAX_VOCAB)
-        tok_tgt = create_tokenizer(targets, max_words=MAX_VOCAB)
+        tok_in = create_tokenizer(inputs, max_words=MAX_VOCAB, add_special_tokens=False)
+        tok_tgt = create_tokenizer(targets, max_words=MAX_VOCAB, add_special_tokens=True)
 
     vs_in = min(len(tok_in.word_index) + 1, MAX_VOCAB + 1)
     vs_tgt = min(len(tok_tgt.word_index) + 1, MAX_VOCAB + 1)
