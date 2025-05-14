@@ -516,7 +516,7 @@ def train_model(data_path, epochs=5, batch_size=120, emb_dim=50, train_from_scra
             staircase=True
             )
 
-        base_opt = Adam(learning_rate=lr_schedule, clipnorm=1.0)
+        base_opt = Adam(learning_rate=lr_schedule)
         opt = tf.keras.mixed_precision.LossScaleOptimizer(base_opt, dynamic=True)
         model.compile(
             optimizer=opt,
