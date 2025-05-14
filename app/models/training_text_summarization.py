@@ -533,7 +533,7 @@ def train_model(data_path, epochs=5, batch_size=256, emb_dim=50, train_from_scra
             optimizer=opt,
             loss="sparse_categorical_crossentropy",
             metrics=[
-                tf.keras.metrics.SparseCategoricalAccuracy(name="val_token_accuracy")
+                tf.keras.metrics.SparseCategoricalAccuracy(name="token_accuracy")
                 ]      
             )
         print(">>> Global policy:", tf.keras.mixed_precision.global_policy().name)
