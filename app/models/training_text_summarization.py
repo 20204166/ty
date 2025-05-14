@@ -474,9 +474,10 @@ def train_model(data_path, epochs=5, batch_size=120, emb_dim=50, train_from_scra
         tf.data.Dataset
           .from_tensor_slices(((val_enc, val_dec_in), val_dec_tgt))
           .batch(batch_size, drop_remainder=False)
-          .repeat()
           .prefetch(tf.data.AUTOTUNE)
     )
+    val_steps = max(1, len(val_enc) // batch_size
+                   + (1 if len(val_enc) % batch_size else 0))
     
     n_rouge = 50
     rouge_ds = (
@@ -565,7 +566,8 @@ def train_model(data_path, epochs=5, batch_size=120, emb_dim=50, train_from_scra
             verbose=2,
             callbacks=callbacks,
             steps_per_epoch=steps_per_epoch,
-            validation_data=val_ds
+            validation_data=val_ds,
+            validation_steps=val_steps
             )
 
 
