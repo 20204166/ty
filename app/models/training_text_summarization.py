@@ -379,7 +379,7 @@ class SaveOnAnyImprovement(tf.keras.callbacks.Callback):
         # scan through all logged metrics
         for name, value in logs.items():
             # only consider validation metrics here
-            if not name.startswith("val_r") or name == "val_token_accuracy":
+            if not name.startswith(   ) :
                 continue
 
             # decide if higher-is-better or lower-is-better
@@ -484,6 +484,7 @@ def train_model(data_path, epochs=5, batch_size=120, emb_dim=50, train_from_scra
         .from_tensor_slices(((val_enc, val_dec_in), val_dec_tgt))
         .shuffle(len(val_enc))            
         .take(n_rouge) 
+        .cache()
         .batch(n_rouge, drop_remainder=False) 
         .prefetch(tf.data.AUTOTUNE)
     )
@@ -550,7 +551,7 @@ def train_model(data_path, epochs=5, batch_size=120, emb_dim=50, train_from_scra
         callbacks = [
             rouge_cb,
             EarlyStopping(
-                monitor='val_rouge1',   
+                monitor='val_token_accuracy',   
                 mode='max',
                 patience=5,
                 restore_best_weights=True
