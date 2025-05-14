@@ -458,7 +458,6 @@ def train_model(data_path, epochs=5, batch_size=120, emb_dim=50, train_from_scra
     train_ds = (
         tf.data.Dataset
         .from_tensor_slices(((train_enc, train_dec_in), train_dec_tgt))
-        .take(len(train_enc)) 
         .cache()
         .repeat()
         .shuffle(buffer_size=steps_per_epoch, seed=42)
