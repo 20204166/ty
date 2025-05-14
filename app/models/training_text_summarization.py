@@ -269,7 +269,8 @@ class SnapshotCallback(Callback):
         total = len(self.model.history.history["loss"])
         self._plot_metrics(total, "_final")
         self._plot_resources(total, "_final")
-
+        
+self.start_id = tgt_tokenizer.word_index.get('<start>', tgt_tokenizer.word_index[tgt_tokenizer.oov_token])
 class SamplePrediction(Callback):
     def __init__(self, val_ds, tokenizer, max_len, samples=3):
         super().__init__()
