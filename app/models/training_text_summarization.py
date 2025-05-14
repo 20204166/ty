@@ -129,48 +129,48 @@ def plot_history(hist, save_dir):
     import os
     import matplotlib.pyplot as plt
 
-    epochs = range(1, len(hist.history['loss']) + 1)
+    epochs = range(1, len(hist.history["loss"]) + 1)
 
     # ── 1) Loss curve ──
     plt.figure()
-    plt.plot(epochs, hist.history['loss'],     label='Train loss')
-    plt.plot(epochs, hist.history['val_loss'], label='Val loss')
-    plt.xlabel('Epoch'); plt.ylabel('Loss')
-    plt.title('Training and Validation Loss')
+    plt.plot(epochs, hist.history["loss"],     label="Train loss")
+    plt.plot(epochs, hist.history["val_loss"], label="Val loss")
+    plt.xlabel("Epoch"); plt.ylabel("loss")
+    plt.title("Training and Validation Loss')
     plt.legend()
-    loss_path = os.path.join(save_dir, 'loss_curve.png')
+    loss_path = os.path.join(save_dir, "loss_curve.png")
     plt.savefig(loss_path)
     plt.close()
 
     # ── 3) Token‐accuracy curve ──
     if 'val_token_accuracy' in hist.history:
         plt.figure()
-        plt.plot(epochs, hist.history['val_token_accuracy'], label='Val token acc')
-        plt.xlabel('Epoch'); plt.ylabel('Token Accuracy')
-        plt.title('Validation Token Accuracy')
+        plt.plot(epochs, hist.history["val_token_accuracy"], label="Val token-acc")
+        plt.xlabel("Epoch"); plt.ylabel("Token Accuracy")
+        plt.title("Validation Token Accuracy")
         plt.legend()
-        tok_path = os.path.join(save_dir, 'token_accuracy_curve.png')
+        tok_path = os.path.join(save_dir, "token_accuracy_curve.png")
         plt.savefig(tok_path)
         plt.close()
 
     # ── 4) ROUGE curves ──
     if 'val_rouge1' in hist.history:
         plt.figure()
-        plt.plot(epochs, hist.history['val_rouge1'], label='ROUGE-1 F1')
-        plt.plot(epochs, hist.history['val_rouge2'], label='ROUGE-2 F1')
-        plt.plot(epochs, hist.history['val_rougeL'], label='ROUGE-L F1')
-        plt.xlabel('Epoch'); plt.ylabel('F1 Score')
-        plt.title('Validation ROUGE Scores')
+        plt.plot(epochs, hist.history["val_rouge1"], label="ROUGE-1 F1")
+        plt.plot(epochs, hist.history["val_rouge2"], label="ROUGE-2 F1")
+        plt.plot(epochs, hist.history["val_rougeL"], label="ROUGE-L F1")
+        plt.xlabel("Epoch"); plt.ylabel("F1 Score")
+        plt.title("Validation ROUGE Scores")
         plt.legend()
-        rouge_path = os.path.join(save_dir, 'rouge_curve.png')
+        rouge_path = os.path.join(save_dir, "rouge_curve.png")
         plt.savefig(rouge_path)
         plt.close()
 
     print("Saved plots to", save_dir,
           os.path.basename(loss_path),
           os.path.basename(acc_path),
-          *(os.path.basename(tok_path) if 'tok_path' in locals() else []),
-          *(os.path.basename(rouge_path) if 'rouge_path' in locals() else []))
+          *(os.path.basename(tok_path) if "tok_path" in locals() else []),
+          *(os.path.basename(rouge_path) if "rouge_path" in locals() else []))
 
 
 
@@ -420,7 +420,7 @@ class CustomEval(Callback):
         print(f"Validation token accuracy: {token_acc:.4f}")
 
 
-def train_model(data_path, epochs=100, batch_size=120, emb_dim=50, train_from_scratch = True):
+def train_model(data_path, epochs=100, batch_size=120, emb_dim=50, train_from_scratch = False):
     inputs, targets = load_training_data(data_path)
     split = int(0.9 * len(inputs))
     save_dir     = "app/models/saved_model"
