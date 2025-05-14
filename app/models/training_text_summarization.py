@@ -278,8 +278,8 @@ class SamplePrediction(Callback):
         
         self.val_ds = val_ds.take(1).unbatch().batch(samples)
         self.tokenizer = tokenizer
-        self.start_id  = tokenizer.word_index['<start>']
-        self.end_id    = tokenizer.word_index['<end>']
+        self.start_id   = tgt_tokenizer.word_index.get('<start>', tgt_tokenizer.word_index[tgt_tokenizer.oov_token])
+        self.end_id     = tgt_tokenizer.word_index.get('<end>',   tgt_tokenizer.word_index[tgt_tokenizer.oov_token])
         self.max_length = max_len
         self.save_path = save_path
 
