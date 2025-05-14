@@ -275,8 +275,8 @@ class SamplePrediction(Callback):
         super().__init__()
         self.val_ds = val_ds.take(1).unbatch().batch(samples)
         self.tokenizer = tokenizer
-        self.start_id   = tgt_tokenizer.word_index.get('<start>', tgt_tokenizer.word_index[tgt_tokenizer.oov_token])
-        self.end_id     = tgt_tokenizer.word_index.get('<end>',   tgt_tokenizer.word_index[tgt_tokenizer.oov_token])
+        self.start_id = tokenizer.word_index.get('<start>', tokenizer.word_index[tokenizer.oov_token])
+        self.end_id = tokenizer.word_index.get('<end>', tokenizer.word_index[tokenizer.oov_token])
         self.max_length = max_len
 
     def on_epoch_end(self, epoch, logs=None):
@@ -300,7 +300,7 @@ class SamplePrediction(Callback):
                 pred = " ".join(self.tokenizer.index_word.get(w, "<OOV>")
                                 for w in pred_seq if w not in (0, self.start_id, self.end_id))
                 print(f"REF:  {ref}\nPRED: {pred}\n")
-                
+
 class RougeCallback(Callback):
     def __init__(self, val_ds, tgt_tokenizer, max_length_target, n_samples):
         super().__init__()
