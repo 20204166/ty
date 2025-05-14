@@ -272,36 +272,56 @@ class SnapshotCallback(Callback):
         self._plot_metrics(total, "_final")
         self._plot_resources(total, "_final")
         
-class SamplePrediction(Callback):
-    def __init__(self, val_ds, tokenizer, max_len, samples=1):
+class FinalSamplePrediction(Callback):
+    def __init__(self, val_ds, tokenizer, max_len, samples=1, save_path="sample_pred.png"):
         super().__init__()
+        
         self.val_ds = val_ds.take(1).unbatch().batch(samples)
         self.tokenizer = tokenizer
-        self.start_id = tokenizer.word_index.get('<start>', tokenizer.word_index[tokenizer.oov_token])
-        self.end_id = tokenizer.word_index.get('<end>', tokenizer.word_index[tokenizer.oov_token])
+        self.start_id  = tokenizer.word_index['<start>']
+        self.end_id    = tokenizer.word_index['<end>']
         self.max_length = max_len
+        self.save_path = save_path
 
-    def on_epoch_end(self, epoch, logs=None):
-        print(f"\n—— Sample predictions after epoch {epoch+1} ——")
-        for (enc, _), dec_tgt in self.val_ds:
+    def on_train_end(self, logs=None):
+      
+        for (enc, _), _ in self.val_ds:
+            
             dec_in = tf.fill([enc.shape[0], 1], self.start_id)
             result = []
+         n
             for _ in range(self.max_length):
-                pad = self.max_length - dec_in.shape[1]
-                logits = self.model([enc, tf.pad(dec_in, [[0,0],[0,pad]])], training=False)
+                pad_len = self.max_length - dec_in.shape[1]
+                logits = self.model([enc, tf.pad(dec_in, [[0,0],[0,pad_len]])],
+                                    training=False)
                 next_tok = tf.argmax(logits[:, -1, :], axis=-1, output_type=tf.int32)
                 dec_in = tf.concat([dec_in, next_tok[:,None]], axis=1)
                 result.append(next_tok)
             preds = tf.stack(result, axis=1).numpy()
 
-            for i in range(enc.shape[0]):
-                ref_seq = dec_tgt[i].numpy()
-                ref = " ".join(self.tokenizer.index_word.get(w, "<OOV>")
-                               for w in ref_seq if w not in (0, self.start_id, self.end_id))
-                pred_seq = preds[i]
-                pred = " ".join(self.tokenizer.index_word.get(w, "<OOV>")
-                                for w in pred_seq if w not in (0, self.start_id, self.end_id))
-                print(f"REF:  {ref}\nPRED: {pred}\n")
+            # only take the first sample for display
+            pred_seq = preds[0]
+            # cut off at the first <end> token
+            if self.end_id in pred_seq:
+                cut = list(pred_seq).index(self.end_id)
+                pred_seq = pred_seq[:cut]
+
+            
+            words = [ self.tokenizer.index_word.get(int(w), "<OOV>")
+                      for w in pred_seq
+                      if w not in (0, self.start_id) ]
+            text = " ".join(words)
+
+            
+            plt.figure(figsize=(8, 1.5))
+            plt.text(0.5, 0.5, text, ha="center", va="center", wrap=True, fontsize=12)
+            plt.axis("off")
+            plt.tight_layout()
+            plt.savefig(self.save_path, dpi=150)
+            plt.close()
+
+            print(f" Saved sample prediction to {self.save_path}")
+            break
 
 class RougeCallback(Callback):
     def __init__(self, val_ds, tgt_tokenizer, max_length_target, n_samples):
