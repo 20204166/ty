@@ -272,7 +272,7 @@ class SnapshotCallback(Callback):
         self._plot_metrics(total, "_final")
         self._plot_resources(total, "_final")
         
-class FinalSamplePrediction(Callback):
+class SamplePrediction(Callback):
     def __init__(self, val_ds, tokenizer, max_len, samples=1, save_path="sample_pred.png"):
         super().__init__()
         
@@ -289,7 +289,7 @@ class FinalSamplePrediction(Callback):
             
             dec_in = tf.fill([enc.shape[0], 1], self.start_id)
             result = []
-         n
+         
             for _ in range(self.max_length):
                 pad_len = self.max_length - dec_in.shape[1]
                 logits = self.model([enc, tf.pad(dec_in, [[0,0],[0,pad_len]])],
