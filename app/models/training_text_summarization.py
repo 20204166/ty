@@ -501,19 +501,19 @@ def train_model(data_path, epochs=70, batch_size=64, emb_dim=50, train_from_scra
             )
 
         lr_schedule = ExponentialDecay(
-            initial_learning_rate=3e-4,
+            initial_learning_rate=1e-4,
             decay_steps=20_000,
             decay_rate=0.98,
             staircase=True
             )
 
-        base_opt = Adam(learning_rate=lr_schedule)
-        opt = tf.keras.mixed_precision.LossScaleOptimizer(base_opt)
+        base_opt = Adam(learning_rate=lr_schedule, clipnorm=1.0)
+        opt = tf.keras.mixed_precision.LossScaleOptimizer(base_opt, dynamic=True)
         model.compile(
             optimizer=opt,
             loss="sparse_categorical_crossentropy",
             metrics=[
-                tf.keras.metrics.SparseCategoricalAccuracy(name="token_accuracy")
+                tf.keras.metrics.SparseCategoricalAccuracy(name="val_token_accuracy")
                 ]      
             )
         print(">>> Global policy:", tf.keras.mixed_precision.global_policy().name)
