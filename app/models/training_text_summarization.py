@@ -379,7 +379,7 @@ class SaveOnAnyImprovement(tf.keras.callbacks.Callback):
         # scan through all logged metrics
         for name, value in logs.items():
             # only consider validation metrics here
-            if not name.startswith("val_r") :
+            if not name.startswith("val_") :
                 continue
 
             # decide if higher-is-better or lower-is-better
