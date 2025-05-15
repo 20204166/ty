@@ -121,7 +121,7 @@ def build_seq2seq_model(vocab_in, vocab_tgt, emb_dim, max_in, max_tgt):
 
     attn = Attention(name="attn_layer")([dec_out2, enc_outs])
     concat = Concatenate(name="concat_layer")([attn, dec_out2])
-    outputs = Dense(vocab_tgt, activation='softmax', name="decoder_dense")(concat)
+    outputs = Dense(vocab_tgt, activation='softmax', name="decoder_dense", dtype='float32')(concat)
 
     model = Model([enc_inputs, dec_inputs], outputs)
    
@@ -510,7 +510,7 @@ def train_model(data_path, epochs=5, batch_size=120, emb_dim=50, train_from_scra
             )
 
         lr_schedule = ExponentialDecay(
-            initial_learning_rate=1e-4,
+            initial_learning_rate=1e-5,
             decay_steps=20_000,
             decay_rate=0.98,
             staircase=True
