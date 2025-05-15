@@ -379,7 +379,7 @@ class SaveOnAnyImprovement(tf.keras.callbacks.Callback):
         # scan through all logged metrics
         for name, value in logs.items():
             # only consider validation metrics here
-            if not name.startswith("val_") :
+            if not name.startswith("val_r") :
                 continue
 
             # decide if higher-is-better or lower-is-better
@@ -427,7 +427,7 @@ class CustomEval(Callback):
         print(f"Validation token accuracy: {token_acc:.4f}")
 
 
-def train_model(data_path, epochs=10, batch_size=320, emb_dim=50, train_from_scratch = False):
+def train_model(data_path, epochs=10, batch_size=384, emb_dim=50, train_from_scratch = False):
     inputs, targets = load_training_data(data_path)
     split = int(0.9 * len(inputs))
     save_dir     = "app/models/saved_model"
@@ -510,7 +510,7 @@ def train_model(data_path, epochs=10, batch_size=320, emb_dim=50, train_from_scr
             )
 
         lr_schedule = ExponentialDecay(
-            initial_learning_rate=1e-5,
+            initial_learning_rate=5e-5,
             decay_steps=20_000,
             decay_rate=0.98,
             staircase=True
@@ -548,6 +548,7 @@ def train_model(data_path, epochs=10, batch_size=320, emb_dim=50, train_from_scr
         
 
         save_cb  = SaveOnAnyImprovement(model_path)
+        
 
         callbacks = [
             rouge_cb,
