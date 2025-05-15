@@ -427,7 +427,7 @@ class CustomEval(Callback):
         print(f"Validation token accuracy: {token_acc:.4f}")
 
 
-def train_model(data_path, epochs=15, batch_size=240, emb_dim=50, train_from_scratch = False):
+def train_model(data_path, epochs=10, batch_size=320, emb_dim=50, train_from_scratch = False):
     inputs, targets = load_training_data(data_path)
     split = int(0.9 * len(inputs))
     save_dir     = "app/models/saved_model"
@@ -479,7 +479,7 @@ def train_model(data_path, epochs=15, batch_size=240, emb_dim=50, train_from_scr
     val_steps = max(1, len(val_enc) // batch_size
                    + (1 if len(val_enc) % batch_size else 0))
     
-    n_rouge = 50
+    n_rouge = 100
     rouge_ds = (
         tf.data.Dataset
         .from_tensor_slices(((val_enc, val_dec_in), val_dec_tgt))
@@ -510,7 +510,7 @@ def train_model(data_path, epochs=15, batch_size=240, emb_dim=50, train_from_scr
             )
 
         lr_schedule = ExponentialDecay(
-            initial_learning_rate=5e-5,
+            initial_learning_rate=1e-5,
             decay_steps=20_000,
             decay_rate=0.98,
             staircase=True
