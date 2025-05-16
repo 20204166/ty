@@ -71,7 +71,7 @@ def load_training_data(data_path: str):
     targets = [f"<start> {t} <end>" for t in targets]
     return inputs, targets
 
-MAX_VOCAB = 10_000
+MAX_VOCAB = 30_000
 def create_tokenizer(texts, oov_token="<OOV>", max_words=MAX_VOCAB, add_special_tokens=True):
     tok = Tokenizer(num_words=max_words, oov_token=oov_token)
     if add_special_tokens:
@@ -427,7 +427,7 @@ class CustomEval(Callback):
         print(f"Validation token accuracy: {token_acc:.4f}")
 
 
-def train_model(data_path, epochs=10, batch_size=384, emb_dim=50, train_from_scratch = False):
+def train_model(data_path, epochs=20, batch_size=384, emb_dim=50, train_from_scratch = False):
     inputs, targets = load_training_data(data_path)
     split = int(0.9 * len(inputs))
     save_dir     = "app/models/saved_model"
