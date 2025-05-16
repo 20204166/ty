@@ -363,43 +363,46 @@ class RougeCallback(Callback):
         logs.update({f'val_{k}': v for k, v in avg.items()})
     
 
+
 class SaveOnAnyImprovement(tf.keras.callbacks.Callback):
-    def __init__(self, filepath):
+    def __init__(self, model_path, monitor="val_rouge1"):
         super().__init__()
-        self.filepath = filepath
-        # we'll keep track of the best seen for each monitored metric
-        self.best = {}
+        self.model_path = model_path
+        self.monitor = monitor
+        self.best_loss = float("inf")
+        self.best_acc = 0.0
+        self.best_rouges = [0.0, 0.0, 0.0]  # [rouge1, rouge2, rougeL]
 
-    
     def on_epoch_end(self, epoch, logs=None):
-        logs = logs or {}
-        any_improved = False
-        improvements = []
-
-        # scan through all logged metrics
-        for name, value in logs.items():
-            # only consider validation metrics here
-            if not name.startswith("val_") :
-                continue
-
-            # decide if higher-is-better or lower-is-better
-            is_loss = name.endswith("loss")
-            best_val = self.best.get(name, np.inf if is_loss else -np.inf)
-
-
-            improved = (value < best_val) if is_loss else (value > best_val)
-            if improved:
-                self.best[name] = value
-                any_improved = True
-                arrow = "↓" if is_loss else "↑"
-                improvements.append(f"{name} {arrow} {value:.4f}")
-
-        if any_improved:
-            self.model.save(self.filepath)
-            print(
-                f"✔️ Saved model at epoch {epoch+1} because " +
-                ", ".join(improvements)
-            )
+        new_loss = logs.get("val_loss")
+        new_acc = logs.get("val_token_accuracy")
+        new_rouges = [logs.get(f"val_rouge{i}") for i in [1, 2, "L"]]
+        
+        # Save if val_rouge1 or val_rougeL improves, or significant val_token_accuracy gain
+        should_save = False
+        save_reasons = []
+        
+        # Primary: Check val_rouge1 and val_rougeL
+        if new_rouges[0] > self.best_rouges[0]:
+            should_save = True
+            save_reasons.append(f"val_rouge1 ↑ {new_rouges[0]:.4f}")
+        if new_rouges[2] > self.best_rouges[2]:
+            should_save = True
+            save_reasons.append(f"val_rougeL ↑ {new_rouges[2]:.4f}")
+        
+        # Secondary: Check val_token_accuracy with loss constraint
+        if new_acc > self.best_acc + 0.001 and new_loss < self.best_loss * 1.1:
+            should_save = True
+            save_reasons.append(f"val_token_accuracy ↑ {new_acc:.4f}")
+        
+        if should_save or not os.path.exists(self.model_path):
+            self.model.save(self.model_path, overwrite=True)
+            print(f"✔️ Saved model at epoch {epoch + 1} because {', '.join(save_reasons)}")
+        
+        # Update best metrics
+        self.best_loss = min(self.best_loss, new_loss)
+        self.best_acc = max(self.best_acc, new_acc)
+        self.best_rouges = [max(nr, br) for nr, br in zip(new_rouges, self.best_rouges)]
 
 class CustomEval(Callback):
     def __init__(self, val_ds, strategy):
@@ -427,7 +430,7 @@ class CustomEval(Callback):
         print(f"Validation token accuracy: {token_acc:.4f}")
 
 
-def train_model(data_path, epochs=20, batch_size=384, emb_dim=50, train_from_scratch = False):
+def train_model(data_path, epochs=5, batch_size=384, emb_dim=50, train_from_scratch = True):
     inputs, targets = load_training_data(data_path)
     split = int(0.9 * len(inputs))
     save_dir     = "app/models/saved_model"
@@ -510,7 +513,7 @@ def train_model(data_path, epochs=20, batch_size=384, emb_dim=50, train_from_scr
             )
 
         lr_schedule = ExponentialDecay(
-            initial_learning_rate=5e-5,
+            initial_learning_rate=1e-5,
             decay_steps=20_000,
             decay_rate=0.98,
             staircase=True
