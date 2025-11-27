@@ -169,7 +169,7 @@ def load_training_data(data_path: str, input_key: str = None, target_key: str = 
 
 
 
-MAX_VOCAB = 30_000
+MAX_VOCAB = 50_000
 
 
 def create_tokenizer(texts, oov_token="<OOV>", max_words=MAX_VOCAB):
