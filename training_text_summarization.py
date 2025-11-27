@@ -29,36 +29,69 @@ os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 set_global_policy(Policy("mixed_float16"))
 
 
-max_length_input = 50
-max_length_target = 20
+max_length_input = 256
+max_length_target = 128
 
 
 def load_training_data(data_path: str, input_key: str = None, target_key: str = None):
+    """
+    General loader for:
+      - New multi-task format: {"source": ..., "target": ..., "task": "..."}
+      - Old summarisation format: {"text": ..., "summary": ...} or {"article": ..., "highlights": ...}
+
+    Returns:
+        inputs:  list of strings
+        targets: list of strings with <start> ... <end>
+    """
     with open(data_path, "r", encoding="utf-8") as f:
         data = json.load(f)
+
     if not data or not isinstance(data[0], dict):
         raise ValueError("Training data must be a non-empty list of objects.")
 
-    if input_key is not None and target_key is not None:
-        # explicit keys for more general use (e.g. "en" / "de")
-        inputs = [item[input_key] for item in data]
-        targets = [item[target_key] for item in data]
-    else:
-        # backward-compatible behaviour
-        if "article" in data[0] and "highlights" in data[0]:
-            inputs = [item["article"] for item in data]
-            targets = [item["highlights"] for item in data]
-        elif "text" in data[0] and "summary" in data[0]:
-            inputs = [item["text"] for item in data]
-            targets = [item["summary"] for item in data]
-        else:
-            raise ValueError(
-                "Training data must contain 'article'/'highlights', 'text'/'summary', "
-                "or you must provide input_key/target_key."
-            )
+    inputs = []
+    targets = []
 
-    targets = [f"<start> {t} <end>" for t in targets]
-    return inputs, targets
+    # 1) Explicit keys override everything
+    if input_key is not None and target_key is not None and input_key in data[0] and target_key in data[0]:
+        for item in data:
+            src = str(item[input_key])
+            tgt = str(item[target_key])
+            inputs.append(src)
+            targets.append(f"<start> {tgt} <end>")
+        return inputs, targets
+
+    # 2) New multi-task format: source/target/task
+    if "source" in data[0] and "target" in data[0]:
+        for item in data:
+            src = str(item["source"])
+            tgt = str(item["target"])
+            task = str(item.get("task", "generic")).strip().lower().replace(" ", "_")
+            # prefix with a task tag, e.g. <task_summarization> or <task_cpp>
+            src_with_task = f"<task_{task}> {src}"
+            inputs.append(src_with_task)
+            targets.append(f"<start> {tgt} <end>")
+        return inputs, targets
+
+    # 3) Backwards compatibility: pure summarisation formats
+    if "article" in data[0] and "highlights" in data[0]:
+        inputs = [str(item["article"]) for item in data]
+        targets = [f"<start> {item['highlights']} <end>" for item in data]
+        return inputs, targets
+
+    if "text" in data[0] and "summary" in data[0]:
+        inputs = [str(item["text"]) for item in data]
+        targets = [f"<start> {item['summary']} <end>" for item in data]
+        return inputs, targets
+
+    raise ValueError(
+        "Unsupported data format. Expected one of:\n"
+        "  - {'source', 'target', 'task'}\n"
+        "  - {'text', 'summary'}\n"
+        "  - {'article', 'highlights'}\n"
+        "  Or pass explicit input_key/target_key."
+    )
+
 
 
 MAX_VOCAB = 30_000
