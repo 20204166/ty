@@ -31,17 +31,82 @@ set_global_policy(Policy("mixed_float16"))
 
 max_length_input = 256
 max_length_target = 128
+# Desired task ratios for multi-task training (only used if the data has "task")
+TASK_RATIOS = {
+    "summarization": 0.4,
+    "code_cpp": 0.4,
+    "math": 0.2,
+}
+# Optional cap on total number of examples after rebalancing
+TASK_MAX_TOTAL = None  # e.g. 500_000 or None for "whatever the data allows"
+ENABLE_TASK_SAMPLING = True
 
+
+def sample_by_task_ratios(data, ratios, max_total=None, seed=42):
+    """
+    Re-sample a mixed-task dataset to roughly match the given ratios.
+
+    Args:
+        data: list of dicts (each may have 'task' key).
+        ratios: dict like {"summarization": 0.4, "code_cpp": 0.4, "math": 0.2}.
+        max_total: optional cap on total number of examples (int) or None.
+        seed: random seed.
+
+    Returns:
+        A new list of dicts sampled according to the ratios, shuffled.
+    """
+    random.seed(seed)
+
+    # Group by task (default "generic" if not present)
+    groups = {}
+    for item in data:
+        task = str(item.get("task", "generic")).strip().lower().replace(" ", "_")
+        groups.setdefault(task, []).append(item)
+
+    # Only consider tasks that appear both in data and in ratios
+    available_tasks = [t for t in ratios.keys() if t in groups and ratios[t] > 0]
+    if not available_tasks:
+        # Nothing to rebalance, just return original data
+        return data
+
+    # Find the maximum total we can sample without oversampling any task
+    base_totals = []
+    for t in available_tasks:
+        r = ratios[t]
+        if r <= 0:
+            continue
+        # To keep ratio r for task t, max total is len(group[t]) / r
+        base_totals.append(len(groups[t]) / r)
+
+    if not base_totals:
+        return data
+
+    base_total = min(base_totals)
+    if max_total is not None:
+        base_total = min(base_total, max_total)
+
+    # Sample per task
+    result = []
+    for t in available_tasks:
+        r = ratios[t]
+        if r <= 0:
+            continue
+        n_t = int(round(base_total * r))
+        n_t = min(n_t, len(groups[t]))
+        result.extend(random.sample(groups[t], n_t))
+
+    random.shuffle(result)
+    return result
 
 def load_training_data(data_path: str, input_key: str = None, target_key: str = None):
     """
     General loader for:
       - New multi-task format: {"source": ..., "target": ..., "task": "..."}
-      - Old summarisation format: {"text": ..., "summary": ...} or {"article": ..., "highlights": ...}
+      - Old summarisation formats: {"text": ..., "summary": ...} or {"article": ..., "highlights": ...}
 
     Returns:
-        inputs:  list of strings
-        targets: list of strings with <start> ... <end>
+        inputs:  list of input strings
+        targets: list of output strings with <start> ... <end>
     """
     with open(data_path, "r", encoding="utf-8") as f:
         data = json.load(f)
@@ -49,11 +114,10 @@ def load_training_data(data_path: str, input_key: str = None, target_key: str = 
     if not data or not isinstance(data[0], dict):
         raise ValueError("Training data must be a non-empty list of objects.")
 
-    inputs = []
-    targets = []
-
-    # 1) Explicit keys override everything
+    # If explicit keys are provided and present, use them
     if input_key is not None and target_key is not None and input_key in data[0] and target_key in data[0]:
+        inputs = []
+        targets = []
         for item in data:
             src = str(item[input_key])
             tgt = str(item[target_key])
@@ -61,24 +125,35 @@ def load_training_data(data_path: str, input_key: str = None, target_key: str = 
             targets.append(f"<start> {tgt} <end>")
         return inputs, targets
 
-    # 2) New multi-task format: source/target/task
+    # 1) NEW multi-task format: source / target / task
     if "source" in data[0] and "target" in data[0]:
+        # Optional per-task rebalancing
+        if ENABLE_TASK_SAMPLING:
+            data = sample_by_task_ratios(data, TASK_RATIOS, max_total=TASK_MAX_TOTAL)
+
+        inputs = []
+        targets = []
         for item in data:
             src = str(item["source"])
             tgt = str(item["target"])
             task = str(item.get("task", "generic")).strip().lower().replace(" ", "_")
-            # prefix with a task tag, e.g. <task_summarization> or <task_cpp>
+
+            # Prefix task token so one model can do summarization, C++, math, etc.
             src_with_task = f"<task_{task}> {src}"
             inputs.append(src_with_task)
             targets.append(f"<start> {tgt} <end>")
+
         return inputs, targets
 
-    # 3) Backwards compatibility: pure summarisation formats
+    # 2) Backwards-compatible summarisation formats
+
+    # CNN/DailyMail-style
     if "article" in data[0] and "highlights" in data[0]:
         inputs = [str(item["article"]) for item in data]
         targets = [f"<start> {item['highlights']} <end>" for item in data]
         return inputs, targets
 
+    # Generic text/summary
     if "text" in data[0] and "summary" in data[0]:
         inputs = [str(item["text"]) for item in data]
         targets = [f"<start> {item['summary']} <end>" for item in data]
@@ -98,8 +173,12 @@ MAX_VOCAB = 30_000
 
 
 def create_tokenizer(texts, oov_token="<OOV>", max_words=MAX_VOCAB):
+    """
+    Simple tokenizer: no extra <start>/<end> here.
+    Those are already added inside load_training_data for targets.
+    """
     tok = Tokenizer(num_words=max_words, oov_token=oov_token)
-    tok.fit_on_texts(texts)  # texts already contain <start> / <end> if needed
+    tok.fit_on_texts(texts)
     return tok
 
 
