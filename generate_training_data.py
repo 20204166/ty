@@ -132,6 +132,8 @@ def process_reddit_tifu(
       - fields: 'documents', 'tldr', 'title'
       - 'long' config: tldr is the summary
       - 'short' config: title is the summary
+    NOTE: This currently requires a dataset script (trust_remote_code),
+    so on Kaggle / latest datasets it is likely to be skipped.
     """
     try:
         ds = load_dataset(
@@ -203,6 +205,8 @@ def process_xsum(
 ) -> List[Dict]:
     """
     XSum: fields 'document' and 'summary'.
+    NOTE: On Kaggle with latest `datasets`, this may be skipped because it
+    still uses a dataset script.
     """
     try:
         ds = load_dataset("xsum", split="train")
@@ -241,6 +245,9 @@ def process_cpp_vault(
       - we filter language="C++"
       - we use docstring as description, code as target
       - streaming=True because the dataset is very large
+
+    NOTE: This dataset currently relies on a Python loading script and may
+    be skipped on Kaggle / datasets>=4 with "dataset scripts not supported".
     """
     try:
         data = load_dataset(
@@ -254,15 +261,12 @@ def process_cpp_vault(
         print(f"⚠️ the-vault-function (C++) not found – skipping. ({e})", file=sys.stderr)
         return []
 
-    # According to the dataset card, the returned object is a dict with key "train"
     stream = data.get("train", None)
     if stream is None:
-        # fallback: take the first value
         stream = next(iter(data.values()))
 
     out: List[Dict] = []
     for sample in stream:
-        # Try the main fields described in the dataset card
         docstring = (
             sample.get("docstring")
             or sample.get("short_docstring")
@@ -275,7 +279,6 @@ def process_cpp_vault(
             continue
 
         desc = truncate_words(clean_nl(docstring), max_desc_words)
-        # DO NOT "clean" code. Just trim whitespace and optionally length.
         code_str = str(code).strip()
         if len(code_str) > max_code_chars:
             code_str = code_str[:max_code_chars]
@@ -342,6 +345,104 @@ def process_simple_math(
             {
                 "source": source,
                 "target": a,
+                "task": "math",
+            }
+        )
+
+        if len(out) >= max_examples:
+            break
+
+    return out
+
+
+def process_gsm8k_fix(
+    max_examples: int = 8_000,
+    max_q_words: int = 128,
+    max_reason_words: int = 256,
+) -> List[Dict]:
+    """
+    Grade-school math word problems from hkust-nlp/gsm8k-fix.
+    Fields (parquet): 'query', 'resp' (reasoning), 'ans' (final answer). :contentReference[oaicite:2]{index=2}
+    We train the model to produce reasoning + final numeric answer.
+    """
+    try:
+        ds = load_dataset("hkust-nlp/gsm8k-fix", split="train")
+    except Exception as e:
+        print(f"⚠️ gsm8k-fix not found – skipping. ({e})", file=sys.stderr)
+        return []
+
+    out: List[Dict] = []
+    for s in ds:
+        q = clean_nl(s.get("query", ""))
+        reasoning = clean_nl(s.get("resp", ""))
+        final_ans = clean_nl(s.get("ans", "") or s.get("gt_ans", ""))
+
+        if not q or not reasoning or not final_ans:
+            continue
+
+        q = truncate_words(q, max_q_words)
+        reasoning = truncate_words(reasoning, max_reason_words)
+
+        source = (
+            "[MATH]\n"
+            "Solve the following grade-school math word problem step by step. "
+            "End your solution with a line 'Final answer: <number>'.\n\n"
+            f"{q}\n\nSolution:"
+        )
+        target = f"{reasoning}\n\nFinal answer: {final_ans}"
+
+        out.append(
+            {
+                "source": source,
+                "target": target,
+                "task": "math",
+            }
+        )
+
+        if len(out) >= max_examples:
+            break
+
+    return out
+
+
+def process_math_qa(
+    max_examples: int = 30_000,
+    max_q_words: int = 128,
+    max_a_words: int = 256,
+) -> List[Dict]:
+    """
+    Multiple-choice math problems from regisss/math_qa. :contentReference[oaicite:3]{index=3}
+    Fields: 'Problem', 'Rationale', 'options', 'correct'.
+    We use the rationale as the answer text (it usually already includes 'answer: X').
+    """
+    try:
+        ds = load_dataset("regisss/math_qa", split="train")
+    except Exception as e:
+        print(f"⚠️ math_qa not found – skipping. ({e})", file=sys.stderr)
+        return []
+
+    out: List[Dict] = []
+    for s in ds:
+        problem = clean_nl(s.get("Problem", ""))
+        rationale = clean_nl(s.get("Rationale", ""))
+        options = clean_nl(s.get("options", ""))
+
+        if not problem or not rationale:
+            continue
+
+        problem = truncate_words(problem, max_q_words)
+        rationale = truncate_words(rationale, max_a_words)
+
+        source = (
+            "[MATH]\n"
+            "You are a helpful math tutor. Solve the problem step by step and choose the correct option.\n\n"
+            f"Problem: {problem}\n\nOptions: {options}\n\nAnswer:"
+        )
+
+        out.append(
+            {
+                "source": source,
+                "target": rationale,
                 "task": "math",
             }
         )
@@ -445,13 +546,27 @@ def save_combined_data(
     except Exception as e:
         print(f"⚠️ Error processing C++ dataset: {e}", file=sys.stderr)
 
-    # ---- Math ----
+    # ---- Math (multiple sources) ----
     try:
-        math_data = process_simple_math(max_examples=max_math)
-        parts.extend(math_data)
-        print(f"Processed simple-math: {len(math_data)} examples")
+        simple_math_data = process_simple_math(max_examples=max_math)
+        parts.extend(simple_math_data)
+        print(f"Processed simple-math: {len(simple_math_data)} examples")
     except Exception as e:
         print(f"⚠️ Error processing simple-math: {e}", file=sys.stderr)
+
+    try:
+        gsm8k_data = process_gsm8k_fix(max_examples=min(8_000, max_math))
+        parts.extend(gsm8k_data)
+        print(f"Processed gsm8k-fix: {len(gsm8k_data)} examples")
+    except Exception as e:
+        print(f"⚠️ Error processing gsm8k-fix: {e}", file=sys.stderr)
+
+    try:
+        math_qa_data = process_math_qa(max_examples=min(30_000, max_math))
+        parts.extend(math_qa_data)
+        print(f"Processed math_qa: {len(math_qa_data)} examples")
+    except Exception as e:
+        print(f"⚠️ Error processing math_qa: {e}", file=sys.stderr)
 
     # ---- Custom ----
     if custom_jsonl:
@@ -484,7 +599,7 @@ if __name__ == "__main__":
 
     save_combined_data(
         output_file=out_path,
-        max_per_summarization=100_000,  # you can tune this for GPU budget
+        max_per_summarization=100_000,  # tune for GPU budget
         max_cpp=200_000,
         max_math=100_000,
         custom_jsonl=custom_path,
