@@ -303,7 +303,117 @@ def process_cpp_vault(
             break
 
     return out
+    
+def process_codeparrot_general(
+    max_examples: int = 50_000,
+    max_code_chars: int = 4000,
+) -> List[Dict]:
+    """
+    General code completion from codeparrot/codeparrot-clean-valid.
+    Fields: 'content' contains the code snippet.
+    We create a prefix->full-completion style task.
 
+    This still uses task='code_cpp' so your existing TASK_RATIOS
+    do not need to change.
+    """
+    try:
+        ds = load_dataset("codeparrot/codeparrot-clean-valid", split="train")
+    except Exception as e:
+        print(f"⚠️ codeparrot/codeparrot-clean-valid not found – skipping. ({e})", file=sys.stderr)
+        return []
+
+    out: List[Dict] = []
+    for s in ds:
+        code = s.get("content", None)
+        if not code:
+            continue
+
+        code_str = str(code).strip()
+        if not code_str:
+            continue
+
+        # Full snippet target
+        if len(code_str) > max_code_chars:
+            code_str = code_str[:max_code_chars]
+
+        # Use the first part as a "prefix" context for completion
+        prefix_chars = max_code_chars // 4
+        prefix = code_str[:prefix_chars]
+
+        source = (
+            "[CODE_GENERAL]\n"
+            "You are an assistant that completes and improves code.\n"
+            "Continue and complete the following code snippet in the same language:\n\n"
+            f"{prefix}\n\n"
+            "Completed code:"
+        )
+
+        out.append(
+            {
+                "source": source,
+                "target": code_str,
+                "task": "code_cpp",  # keep same task label so sampling logic still works
+            }
+        )
+
+        if len(out) >= max_examples:
+            break
+
+    return out
+
+def process_stack_smol_python(
+    max_examples: int = 30_000,
+    max_code_chars: int = 4000,
+) -> List[Dict]:
+    """
+    Python code from ml6team/the-stack-smol-python.
+    Fields include 'content' (code), 'lang', etc.
+    We again do prefix->completion style tasks.
+
+    Still tagged as 'code_cpp' to avoid changing training code.
+    """
+    try:
+        ds = load_dataset("ml6team/the-stack-smol-python", split="train")
+    except Exception as e:
+        print(f"⚠️ the-stack-smol-python not found – skipping. ({e})", file=sys.stderr)
+        return []
+
+    out: List[Dict] = []
+    for s in ds:
+        code = s.get("content", None)
+        if not code:
+            continue
+
+        code_str = str(code).strip()
+        if not code_str:
+            continue
+
+        if len(code_str) > max_code_chars:
+            code_str = code_str[:max_code_chars]
+
+        prefix_chars = max_code_chars // 4
+        prefix = code_str[:prefix_chars]
+
+        source = (
+            "[CODE_PYTHON]\n"
+            "You are an assistant that writes clean, idiomatic Python.\n"
+            "Continue and complete the following Python code:\n\n"
+            f"{prefix}\n\n"
+            "Completed Python code:"
+        )
+
+        out.append(
+            {
+                "source": source,
+                "target": code_str,
+                "task": "code_cpp",  # same bucket as C++ for now
+            }
+        )
+
+        if len(out) >= max_examples:
+            break
+
+    return out
 
 # -----------------------------
 # 3) Math QA
@@ -545,6 +655,22 @@ def save_combined_data(
         print(f"Processed C++ code (the-vault-function): {len(cpp_data)} examples")
     except Exception as e:
         print(f"⚠️ Error processing C++ dataset: {e}", file=sys.stderr)
+
+    # ---- Extra general code: codeparrot ----
+    try:
+        codeparrot_data = process_codeparrot_general(max_examples=50_000)
+        parts.extend(codeparrot_data)
+        print(f"Processed general code (codeparrot-clean-valid): {len(codeparrot_data)} examples")
+    except Exception as e:
+        print(f"⚠️ Error processing codeparrot dataset: {e}", file=sys.stderr)
+
+    # ---- Extra Python code: the-stack-smol-python ----
+    try:
+        py_smol_data = process_stack_smol_python(max_examples=30_000)
+        parts.extend(py_smol_data)
+        print(f"Processed Python code (the-stack-smol-python): {len(py_smol_data)} examples")
+    except Exception as e:
+        print(f"⚠️ Error processing the-stack-smol-python: {e}", file=sys.stderr)
 
     # ---- Math (multiple sources) ----
     try:
