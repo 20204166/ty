@@ -414,6 +414,62 @@ def process_stack_smol_python(
             break
 
     return out
+def process_leetcode_dataset(
+    max_examples: int = 5_000,
+    max_problem_words: int = 256,
+    max_answer_words: int = 512,
+) -> List[Dict]:
+    """
+    LeetCode-style coding problems from newfacade/LeetCodeDataset.
+    Fields (see dataset card):
+      - 'query' / 'problem_description': prompt/problem
+      - 'response' / 'completion': solution or reasoning + code
+
+    We turn them into instruction-style code tasks.
+    Still use task='code_cpp' so you don't have to change TASK_RATIOS.
+    """
+    try:
+        ds = load_dataset("newfacade/LeetCodeDataset", split="train")
+    except Exception as e:
+        print(f"⚠️ LeetCodeDataset not found – skipping. ({e})", file=sys.stderr)
+        return []
+
+    out: List[Dict] = []
+    for s in ds:
+        # Prefer the ready-made LLM-style fields if they exist
+        problem = s.get("query") or s.get("problem_description") or ""
+        answer = s.get("response") or s.get("completion") or ""
+
+        problem = clean_nl(problem)
+        answer = clean_nl(answer)
+
+        if not problem or not answer:
+            continue
+
+        problem = truncate_words(problem, max_problem_words)
+        answer = truncate_words(answer, max_answer_words)
+
+        source = (
+            "[LEETCODE]\n"
+            "You are an expert competitive programming assistant.\n"
+            "Solve the following coding problem. Provide a clear explanation "
+            "and a complete, correct solution in code:\n\n"
+            f"{problem}\n\n"
+            "Solution:"
+        )
+
+        out.append(
+            {
+                "source": source,
+                "target": answer,
+                "task": "code_cpp",  # keep it in the 'code' bucket
+            }
+        )
+
+        if len(out) >= max_examples:
+            break
+
+    return out
 
 # -----------------------------
 # 3) Math QA
@@ -655,6 +711,15 @@ def save_combined_data(
         print(f"Processed C++ code (the-vault-function): {len(cpp_data)} examples")
     except Exception as e:
         print(f"⚠️ Error processing C++ dataset: {e}", file=sys.stderr)
+    
+    # ---- LeetCode-style problems ----
+    try:
+        leet_data = process_leetcode_dataset(max_examples=3_000)
+        parts.extend(leet_data)
+        print(f"Processed LeetCodeDataset: {len(leet_data)} examples")
+    except Exception as e:
+        print(f"⚠️ Error processing LeetCodeDataset: {e}", file=sys.stderr)
+
 
     # ---- Extra general code: codeparrot ----
     try:
