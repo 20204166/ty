@@ -764,7 +764,7 @@ def train_model(data_path, epochs=2, batch_size=32, emb_dim=50, train_from_scrat
             staircase=True,
         )
 
-        base_opt = Adam(
+        opt = Adam(
             learning_rate=lr_schedule,
             clipnorm=1.0,   # ★ gradient clipping to avoid NaNs
         )
