@@ -769,8 +769,8 @@ def train_model(data_path, epochs=2, batch_size=16, emb_dim=50, train_from_scrat
 
 
         base_opt = Adam(
-            learning_rate=1e-5, 
-            global_clipnorm=1.0, # keep gradient clipping
+            learning_rate=5e-6, 
+            clipnorm=0.5, # keep gradient clipping
         )
         opt = base_opt
 
