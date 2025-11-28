@@ -783,6 +783,17 @@ def train_model(data_path, epochs=2, batch_size=16, emb_dim=50, train_from_scrat
                 print("train_from_scratch=True → starting from random init.")
             else:
                 print("No previous weights file found → starting from random init.")
+          
+        print(">>> Manual loss scan on first 130 batches...")
+        for i, ((enc_b, dec_in_b), dec_tgt_b) in enumerate(train_ds.take(130)):
+            loss_val = masked_sparse_ce(dec_tgt_b, model([enc_b, dec_in_b], training=False))
+            loss_val = float(loss_val.numpy())
+            print(f"Batch {i}: manual loss = {loss_val}")
+            if not np.isfinite(loss_val):
+                print(f"!! Non-finite manual loss at batch {i}")
+                break
+        print(">>> Manual scan done.")
+
 
         # -------- Optimizer: smaller LR + gradient clipping --------
                 # -------- Optimizer: smaller LR + gradient clipping --------
