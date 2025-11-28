@@ -768,6 +768,22 @@ def save_combined_data(
     if not parts:
         raise RuntimeError("No data processed—check your datasets.")
 
+    # 🔥 Final safety pass: drop any examples with empty / whitespace-only source/target
+    cleaned_parts = []
+    for ex in parts:
+        src = ex.get("source", "")
+        tgt = ex.get("target", "")
+        if src is None or tgt is None:
+            continue
+        if not str(src).strip() or not str(tgt).strip():
+            continue
+        cleaned_parts.append(ex)
+
+    if not cleaned_parts:
+        raise RuntimeError("All examples filtered out as empty source/target – check data generation.")
+
+    parts = cleaned_parts
+
     random.shuffle(parts)
 
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
