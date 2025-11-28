@@ -636,6 +636,13 @@ class SaveOnAnyImprovement(tf.keras.callbacks.Callback):
         ]
 
 
+class DebugLoss(Callback):
+    def on_train_batch_end(self, batch, logs=None):
+        loss = logs.get("loss")
+        if loss is not None and not np.isfinite(loss):
+            print(f"[DebugLoss] Non-finite loss at batch {batch}: {loss}")
+        elif batch % 50 == 0:
+            print(f"[DebugLoss] batch {batch}, loss={loss:.4f}")
 
 class CustomEval(Callback):
     def __init__(self, val_ds, strategy):
@@ -663,7 +670,12 @@ class CustomEval(Callback):
         print(f"Validation token accuracy: {token_acc:.4f}")
 
 
-def train_model(data_path, epochs=2, batch_size=32, emb_dim=50, train_from_scratch=False):
+def train_model(data_path, epochs=2, batch_size=16, emb_dim=50, train_from_scratch=False):
+    print("train_dec_tgt range:", train_dec_tgt.min(), train_dec_tgt.max())
+    print("vs_tgt:", vs_tgt)
+    print("Any NaN in train_dec_tgt?", np.isnan(train_dec_tgt).any())
+    print("Any NaN in train_enc?", np.isnan(train_enc).any())
+
     inputs, targets = load_training_data(data_path)
     split = int(0.9 * len(inputs))
     save_dir = "app/models/saved_model"
@@ -699,7 +711,7 @@ def train_model(data_path, epochs=2, batch_size=32, emb_dim=50, train_from_scrat
     num_train = len(train_enc)
 
     #  cap steps/epoch so Kaggle doesn't take 3h
-    MAX_STEPS_PER_EPOCH = 2000  # you can drop to 1000 if still too slow
+    MAX_STEPS_PER_EPOCH = 1000  # you can drop to 1000 if still too slow
     steps_per_epoch = min(
         MAX_STEPS_PER_EPOCH,
         max(1, num_train // batch_size),
@@ -787,6 +799,7 @@ def train_model(data_path, epochs=2, batch_size=32, emb_dim=50, train_from_scrat
         )
         print(">>> Global policy:", tf.keras.mixed_precision.global_policy().name)
         print(">>> Optimizer class:", type(model.optimizer).__name__)
+        debug_cb = DebugLoss()
 
         snap_cb = SnapshotCallback(save_dir="app/models/saved_model/plots", interval_epochs=10)
         rouge_cb = RougeCallback(
@@ -799,7 +812,7 @@ def train_model(data_path, epochs=2, batch_size=32, emb_dim=50, train_from_scrat
         save_cb = SaveOnAnyImprovement(model_path, weights_path)
 
         callbacks = [
-            TerminateOnNaN(),
+            debug_cb,
             EarlyStopping(
                 monitor="val_token_accuracy",
                 mode="max",
@@ -807,6 +820,8 @@ def train_model(data_path, epochs=2, batch_size=32, emb_dim=50, train_from_scrat
                 restore_best_weights=True,
             ),
             save_cb,
+            TerminateOnNaN(),
+            
         ]
 
         history = model.fit(
