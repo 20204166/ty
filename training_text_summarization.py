@@ -23,7 +23,7 @@ from tensorflow.keras.layers import (
     LayerNormalization,
     Add,
 )
-from tensorflow.keras.mixed_precision import Policy, set_global_policy
+
 from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.optimizers.schedules import ExponentialDecay
@@ -31,7 +31,7 @@ from tensorflow.keras.preprocessing.sequence import pad_sequences
 from tensorflow.keras.preprocessing.text import Tokenizer
 
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
-set_global_policy(Policy("mixed_float16"))
+
 
 
 max_length_input = 256
@@ -760,7 +760,7 @@ def train_model(data_path, epochs=2, batch_size=32, emb_dim=50, train_from_scrat
 
         # -------- Optimizer: smaller LR + gradient clipping --------
         lr_schedule = ExponentialDecay(
-            initial_learning_rate=3e-5,   # slightly safer than 5e-5
+            initial_learning_rate=3e-5,
             decay_steps=20_000,
             decay_rate=0.98,
             staircase=True,
@@ -768,9 +768,8 @@ def train_model(data_path, epochs=2, batch_size=32, emb_dim=50, train_from_scrat
 
         opt = Adam(
             learning_rate=lr_schedule,
-            clipnorm=1.0,   # ★ gradient clipping to avoid NaNs
+            clipnorm=1.0,  # keep gradient clipping
         )
-        
 
         model.compile(
             optimizer=opt,
