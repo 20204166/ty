@@ -31,6 +31,8 @@ from tensorflow.keras.preprocessing.sequence import pad_sequences
 from tensorflow.keras.preprocessing.text import Tokenizer
 
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+USE_MULTI_GPU = True  # set False for 1 GPU, True for both
+
 
 
 
@@ -803,8 +805,14 @@ def train_model(data_path, epochs=2, batch_size=16, emb_dim=50, train_from_scrat
         .prefetch(tf.data.AUTOTUNE)
     )
 
-    #strategy = tf.distribute.MirroredStrategy()
-    strategy = tf.distribute.get_strategy()
+    if USE_MULTI_GPU:
+        strategy = tf.distribute.MirroredStrategy()
+        print(">>> Using MirroredStrategy with",
+              strategy.num_replicas_in_sync, "replicas")
+    else:
+        strategy = tf.distribute.get_strategy()
+        print(">>> Using default (single GPU / CPU) strategy")
+        
     with strategy.scope():
         # -------- Build model first --------
         model = build_seq2seq_model(
