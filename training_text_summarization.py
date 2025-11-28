@@ -694,6 +694,8 @@ def train_model(data_path, epochs=2, batch_size=16, emb_dim=50, train_from_scrat
 
     # ---------------- Tokenizers ----------------
     train_in, train_tgt = inputs[:split], targets[:split]
+    print("Train_dec_tgt min / max:", train_dec_tgt.min(), train_dec_tgt.max())
+    print("Vocab size (vs_tgt):", vs_tgt)
     val_in, val_tgt = inputs[split:], targets[split:]
     if os.path.exists(tok_in_path) and os.path.exists(tok_tgt_path):
         tok_in = load_tokenizer(tok_in_path)
@@ -781,11 +783,13 @@ def train_model(data_path, epochs=2, batch_size=16, emb_dim=50, train_from_scrat
 
         base_opt = Adam(
             learning_rate=5e-6, 
-            clipnorm=0.5, # keep gradient clipping
+            clipvalue=1.0, # keep gradient clipping
         )
         opt = base_opt
 
-        loss_fn = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
+        loss_fn = tf.keras.losses.SparseCategoricalCrossentropy(
+            from_logits=True,
+        )
 
         model.compile(
             optimizer=opt,
