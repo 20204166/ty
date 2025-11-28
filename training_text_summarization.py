@@ -303,7 +303,7 @@ def build_seq2seq_model(
     
     outputs = Dense(
         vocab_tgt,
-        activation="softmax",
+        activation=None,
         name="decoder_dense",
         dtype="float32",  # keep float32 with mixed precision
     )(dec_context)
@@ -759,21 +759,20 @@ def train_model(data_path, epochs=2, batch_size=32, emb_dim=50, train_from_scrat
                 print("No previous weights file found → starting from random init.")
 
         # -------- Optimizer: smaller LR + gradient clipping --------
-        lr_schedule = ExponentialDecay(
-            initial_learning_rate=1e-5,
-            decay_steps=20_000,
-            decay_rate=0.98,
-            staircase=True,
-        )
+
 
         base_opt = Adam(
-            learning_rate=lr_schedule,
+            learning_rate=1e-5,
             clipnorm=1.0,  # keep gradient clipping
+            global_clipnorm=1.0,
         )
         opt = base_opt
+
+        loss_fn = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
+
         model.compile(
             optimizer=opt,
-            loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=False),
+            loss=loss_fn,
             metrics=[tf.keras.metrics.SparseCategoricalAccuracy(name="token_accuracy")],
         )
 
