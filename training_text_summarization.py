@@ -223,17 +223,20 @@ def prepare_decoder_sequences(sequences):
 def masked_sparse_ce(y_true, y_pred):
     """
     Robust sparse CE with padding mask.
-    - y_true: (batch, T) int32, 0 = padding
+    - y_true: (batch, T) labels (may come in as float / int)
     - y_pred: (batch, T, vocab) logits
     """
+    # 0) force correct dtypes
+    y_true = tf.cast(y_true, tf.int32)      # sparse CE needs int32 / int64
+    y_pred = tf.cast(y_pred, tf.float32)    # logits in float32
+
     # 1) clamp logits so softmax / exp can't blow up
     y_pred = tf.clip_by_value(y_pred, -20.0, 20.0)
 
     # 2) numerically-stable per-token CE
-    #    tf.nn version is very robust
     loss_per_token = tf.nn.sparse_softmax_cross_entropy_with_logits(
-        labels=y_true,   # (batch, T)
-        logits=y_pred,   # (batch, T, vocab)
+        labels=y_true,   # (batch, T), int32
+        logits=y_pred,   # (batch, T, vocab), float32
     )  # -> (batch, T)
 
     # 3) replace non-finite tokens (inf / nan) with a big finite constant
@@ -250,6 +253,7 @@ def masked_sparse_ce(y_true, y_pred):
     # 5) average over non-pad tokens only
     denom = tf.reduce_sum(mask) + 1e-8
     return tf.reduce_sum(loss_per_token) / denom
+
 
 def build_seq2seq_model(
     vocab_in,
