@@ -9,7 +9,9 @@ import psutil
 from rouge_score import rouge_scorer
 
 import tensorflow as tf
-from tensorflow.keras.callbacks import Callback, EarlyStopping
+
+from tensorflow.keras.callbacks import Callback, EarlyStopping, TerminateOnNaN
+
 from tensorflow.keras.layers import (
     Attention,
     Concatenate,
