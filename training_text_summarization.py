@@ -760,17 +760,17 @@ def train_model(data_path, epochs=2, batch_size=32, emb_dim=50, train_from_scrat
 
         # -------- Optimizer: smaller LR + gradient clipping --------
         lr_schedule = ExponentialDecay(
-            initial_learning_rate=3e-5,
+            initial_learning_rate=1e-5,
             decay_steps=20_000,
             decay_rate=0.98,
             staircase=True,
         )
 
-        opt = Adam(
+        base_opt = Adam(
             learning_rate=lr_schedule,
             clipnorm=1.0,  # keep gradient clipping
         )
-
+        opt = base_opt
         model.compile(
             optimizer=opt,
             loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=False),
@@ -801,7 +801,7 @@ def train_model(data_path, epochs=2, batch_size=32, emb_dim=50, train_from_scrat
         save_cb = SaveOnAnyImprovement(model_path, weights_path)
 
         callbacks = [
-            rouge_cb,
+            TerminateOnNaN(),
             EarlyStopping(
                 monitor="val_token_accuracy",
                 mode="max",
@@ -809,7 +809,6 @@ def train_model(data_path, epochs=2, batch_size=32, emb_dim=50, train_from_scrat
                 restore_best_weights=True,
             ),
             save_cb,
-            TerminateOnNaN(),
         ]
 
         history = model.fit(
