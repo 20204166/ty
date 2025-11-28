@@ -785,12 +785,12 @@ def train_model(data_path, epochs=2, batch_size=16, emb_dim=50, train_from_scrat
                 print("No previous weights file found → starting from random init.")
 
         # -------- Optimizer: smaller LR + gradient clipping --------
-
-
-        opt = base_opt = Adam(
+                # -------- Optimizer: smaller LR + gradient clipping --------
+        base_opt = Adam(
             learning_rate=5e-6,
-            global_clipnorm=1.0,  # keep gradient clipping
+            global_clipnorm=1.0,  # gradient clipping
         )
+        opt = base_opt
 
         def masked_sparse_ce(y_true, y_pred):
             """
