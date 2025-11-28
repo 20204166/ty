@@ -804,6 +804,7 @@ def train_model(data_path, epochs=2, batch_size=16, emb_dim=50, train_from_scrat
     )
 
     #strategy = tf.distribute.MirroredStrategy()
+    strategy = tf.distribute.get_strategy()
     with strategy.scope():
         # -------- Build model first --------
         model = build_seq2seq_model(
