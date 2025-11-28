@@ -792,7 +792,6 @@ def train_model(data_path, epochs=2, batch_size=16, emb_dim=50, train_from_scrat
 
         loss_fn = tf.keras.losses.SparseCategoricalCrossentropy(
             from_logits=True,
-            reduction="auto",
         )
 
         model.compile(
