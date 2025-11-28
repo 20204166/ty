@@ -843,7 +843,6 @@ def train_model(data_path, epochs=2, batch_size=16, emb_dim=50, train_from_scrat
             optimizer=opt,
             loss=masked_sparse_ce,
             metrics=[tf.keras.metrics.SparseCategoricalAccuracy(name="token_accuracy")],
-            run_eagerly=True,
         )
 
         # quick sanity check
