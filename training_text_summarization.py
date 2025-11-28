@@ -772,7 +772,7 @@ def train_model(data_path, epochs=2, batch_size=32, emb_dim=50, train_from_scrat
 
         model.compile(
             optimizer=opt,
-            loss="sparse_categorical_crossentropy",
+            loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=False),
             metrics=[tf.keras.metrics.SparseCategoricalAccuracy(name="token_accuracy")],
         )
 
@@ -808,7 +808,7 @@ def train_model(data_path, epochs=2, batch_size=32, emb_dim=50, train_from_scrat
                 restore_best_weights=True,
             ),
             save_cb,
-            snap_cb,
+            TerminateOnNaN(),
         ]
 
         history = model.fit(
