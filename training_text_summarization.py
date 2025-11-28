@@ -34,8 +34,8 @@ max_length_input = 256
 max_length_target = 128
 # Desired task ratios for multi-task training (only used if the data has "task")
 TASK_RATIOS = {
-    "summarization": 0.4,
-    "code_cpp": 0.4,
+    "summarization": 0.5,
+    "code_cpp": 0.3,
     "math": 0.2,
 }
 # Optional cap on total number of examples after rebalancing
@@ -363,7 +363,7 @@ class SnapshotCallback(Callback):
         plt.close()
         
         # 2) Token‐accuracy (your real metric)
-        if "token_accuracy" not in h:
+        if "token_accuracy" in h:
             plt.figure()
             plt.plot(epochs, h["token_accuracy"][:upto], label="Train token-acc")
             if "val_token_accuracy" in h:
@@ -453,7 +453,7 @@ class SnapshotCallback(Callback):
 
 
     def on_train_end(self, logs=None):
-        total = len(self.model.history.get("loss",[]))
+        total = len(self.history.get("loss",[]))
         if total > 0:
             self._plot_metrics(total, "_final")
             self._plot_resources(total, "_final")
@@ -620,7 +620,7 @@ class CustomEval(Callback):
         print(f"Validation token accuracy: {token_acc:.4f}")
 
 
-def train_model(data_path, epochs=2, batch_size=16, emb_dim=50, train_from_scratch=False):
+def train_model(data_path, epochs=2, batch_size=32, emb_dim=50, train_from_scratch=False):
     inputs, targets = load_training_data(data_path)
     split = int(0.9 * len(inputs))
     save_dir = "app/models/saved_model"
@@ -670,7 +670,7 @@ def train_model(data_path, epochs=2, batch_size=16, emb_dim=50, train_from_scrat
         len(val_enc) // batch_size + (1 if len(val_enc) % batch_size else 0),
     )
 
-    n_rouge = 100
+    n_rouge = 8
     rouge_ds = (
         tf.data.Dataset.from_tensor_slices(((val_enc, val_dec_in), val_dec_tgt))
         .shuffle(len(val_enc))
