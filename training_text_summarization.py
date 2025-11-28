@@ -18,6 +18,8 @@ from tensorflow.keras.layers import (
     Input,
     LSTMCell,
     Dropout,
+    LayerNormalization,
+    Add,
 )
 from tensorflow.keras.mixed_precision import Policy, set_global_policy
 from tensorflow.keras.models import Model
@@ -35,8 +37,8 @@ max_length_target = 128
 # Desired task ratios for multi-task training (only used if the data has "task")
 TASK_RATIOS = {
     "summarization": 0.5,
-    "code_cpp": 0.3,
-    "math": 0.2,
+    "code_cpp": 0.2,
+    "math": 0.3,
 }
 # Optional cap on total number of examples after rebalancing
 TASK_MAX_TOTAL = None  # e.g. 500_000 or None for "whatever the data allows"
@@ -240,6 +242,24 @@ def build_seq2seq_model(
     enc_outs, h2, c2 = enc_rnn2(out1)
     enc_states = [h2, c2]
 
+    enc_self_attn = Attention(name="enc_self_attn")([enc_outs, enc_outs])
+
+    # Fuse raw encoder outputs + self-attention into a single sequence
+    enc_context_mix = Concatenate(name="enc_context_mix")([enc_outs, enc_self_attn])
+
+    # Project back to enc_units so enc_outs keeps the SAME SHAPE as before
+    enc_outs = Dense(
+        enc_units,
+        activation="tanh",
+        name="enc_context_proj",
+    )(enc_context_mix)
+    
+    # enc_outs is now a richer encoder representation, but same shape
+    enc_norm = LayerNormalization(name="enc_ln")(enc_outs)
+    enc_ffn = Dense(enc_units * 4, activation="relu", name="enc_ffn1")(enc_norm)
+    enc_ffn = Dense(enc_units, name="enc_ffn2")(enc_ffn)
+    enc_outs = Add(name="enc_ffn_res")([enc_outs, enc_ffn])
+
     # Decoder: 2-layer LSTM
     dec_inputs = Input(shape=(max_tgt,), name="dec_inputs")
     dec_emb = Embedding(vocab_tgt, emb_dim, name="dec_emb")(dec_inputs)
@@ -268,16 +288,23 @@ def build_seq2seq_model(
 
     # Self-attention on the decoder outputs: decoder → decoder
     self_attn = Attention(name="self_attn")([dec_out2, dec_out2])
+    
+    # but KEEP the last dim = dec_units (no shape change)
+    fused = tf.keras.layers.Add(name="decoder_fused")(
+        [dec_out2, cross_attn, self_attn]
+    )
 
-    # Combine all three: decoder outputs + both attention contexts
-    concat = Concatenate(name="concat_layer")([dec_out2, cross_attn, self_attn])
-
+    dec_norm = LayerNormalization(name="dec_ln")(fused)
+    dec_ffn = Dense(dec_units * 4, activation="relu", name="dec_ffn1")(dec_norm)
+    dec_ffn = Dense(dec_units, name="dec_ffn2")(dec_ffn)
+    dec_context = Add(name="dec_ffn_res")([fused, dec_ffn])
+    
     outputs = Dense(
         vocab_tgt,
         activation="softmax",
         name="decoder_dense",
         dtype="float32",  # keep float32 with mixed precision
-    )(concat)
+    )(dec_context)
 
     model = Model([enc_inputs, dec_inputs], outputs)
     return model
@@ -554,44 +581,58 @@ class RougeCallback(Callback):
 
 
 class SaveOnAnyImprovement(tf.keras.callbacks.Callback):
-    def __init__(self, model_path, monitor="val_rouge1"):
+    def __init__(self, model_path, weights_path, monitor="val_rouge1"):
         super().__init__()
-        self.model_path = model_path
+        self.model_path = model_path       # full .keras model
+        self.weights_path = weights_path   # weights .h5
         self.monitor = monitor
         self.best_loss = float("inf")
         self.best_acc = 0.0
         self.best_rouges = [0.0, 0.0, 0.0]  # [rouge1, rouge2, rougeL]
 
     def on_epoch_end(self, epoch, logs=None):
+        logs = logs or {}
         new_loss = logs.get("val_loss")
         new_acc = logs.get("val_token_accuracy")
         new_rouges = [logs.get(f"val_rouge{i}") for i in [1, 2, "L"]]
 
-        # Save if val_rouge1 or val_rougeL improves, or significant val_token_accuracy gain
         should_save = False
         save_reasons = []
 
-        # Primary: Check val_rouge1 and val_rougeL
-        if new_rouges[0] > self.best_rouges[0]:
+        # Primary: ROUGE
+        if new_rouges[0] is not None and new_rouges[0] > self.best_rouges[0]:
             should_save = True
             save_reasons.append(f"val_rouge1 ↑ {new_rouges[0]:.4f}")
-        if new_rouges[2] > self.best_rouges[2]:
+        if new_rouges[2] is not None and new_rouges[2] > self.best_rouges[2]:
             should_save = True
             save_reasons.append(f"val_rougeL ↑ {new_rouges[2]:.4f}")
 
-        # Secondary: Check val_token_accuracy with loss constraint
-        if new_acc > self.best_acc + 0.001 and new_loss < self.best_loss * 1.1:
+        # Secondary: token accuracy with loss constraint
+        if (
+            new_acc is not None
+            and new_loss is not None
+            and new_acc > self.best_acc + 0.001
+            and new_loss < self.best_loss * 1.1
+        ):
             should_save = True
             save_reasons.append(f"val_token_accuracy ↑ {new_acc:.4f}")
 
-        if should_save or not os.path.exists(self.model_path):
+        if should_save or not os.path.exists(self.weights_path):
+            # Save full model + weights
             self.model.save(self.model_path, overwrite=True)
+            self.model.save_weights(self.weights_path, overwrite=True)
             print(f"✔️ Saved model at epoch {epoch + 1} because {', '.join(save_reasons)}")
 
         # Update best metrics
-        self.best_loss = min(self.best_loss, new_loss)
-        self.best_acc = max(self.best_acc, new_acc)
-        self.best_rouges = [max(nr, br) for nr, br in zip(new_rouges, self.best_rouges)]
+        if new_loss is not None:
+            self.best_loss = min(self.best_loss, new_loss)
+        if new_acc is not None:
+            self.best_acc = max(self.best_acc, new_acc)
+        self.best_rouges = [
+            max(nr if nr is not None else 0.0, br)
+            for nr, br in zip(new_rouges, self.best_rouges)
+        ]
+
 
 
 class CustomEval(Callback):
@@ -627,9 +668,11 @@ def train_model(data_path, epochs=2, batch_size=32, emb_dim=50, train_from_scrat
     tok_in_path = f"{save_dir}/tokenizer_input.json"
     tok_tgt_path = f"{save_dir}/tokenizer_target.json"
     model_path = f"{save_dir}/summarization_model.keras"
+    weights_path = f"{save_dir}/summarization_model.weights.h5"
 
     os.makedirs(save_dir, exist_ok=True)
 
+    # ---------------- Tokenizers ----------------
     train_in, train_tgt = inputs[:split], targets[:split]
     val_in, val_tgt = inputs[split:], targets[split:]
     if os.path.exists(tok_in_path) and os.path.exists(tok_tgt_path):
@@ -642,6 +685,7 @@ def train_model(data_path, epochs=2, batch_size=32, emb_dim=50, train_from_scrat
     vs_in = min(len(tok_in.word_index) + 1, MAX_VOCAB + 1)
     vs_tgt = min(len(tok_tgt.word_index) + 1, MAX_VOCAB + 1)
 
+    # ---------------- Preprocess ----------------
     train_enc = preprocess_texts(train_in, tok_in, max_length_input, vs_in)
     train_dec = preprocess_texts(train_tgt, tok_tgt, max_length_target, vs_tgt)
     train_dec_in, train_dec_tgt = prepare_decoder_sequences(train_dec)
@@ -651,7 +695,14 @@ def train_model(data_path, epochs=2, batch_size=32, emb_dim=50, train_from_scrat
     val_dec_in, val_dec_tgt = prepare_decoder_sequences(val_dec)
 
     num_train = len(train_enc)
-    steps_per_epoch = max(1, num_train // batch_size)
+
+    #  cap steps/epoch so Kaggle doesn't take 3h
+    MAX_STEPS_PER_EPOCH = 2000  # you can drop to 1000 if still too slow
+    steps_per_epoch = min(
+        MAX_STEPS_PER_EPOCH,
+        max(1, num_train // batch_size),
+    )
+
     train_ds = (
         tf.data.Dataset.from_tensor_slices(((train_enc, train_dec_in), train_dec_tgt))
         .shuffle(buffer_size=num_train, seed=42)
@@ -682,38 +733,50 @@ def train_model(data_path, epochs=2, batch_size=32, emb_dim=50, train_from_scrat
 
     strategy = tf.distribute.MirroredStrategy()
     with strategy.scope():
-        if (not train_from_scratch) and os.path.exists(model_path):
-            print("Loading model from disk")
-            model = tf.keras.models.load_model(
-                model_path,
-                custom_objects={
-                    "Attention": Attention,
-                    "ExponentialDecay": ExponentialDecay,
-                },
-            )
-        else:
-            model = build_seq2seq_model(
-                vs_in,
-                vs_tgt,
-                emb_dim,
-                max_length_input,
-                max_length_target,
-            )
+        # -------- Build model first --------
+        model = build_seq2seq_model(
+            vs_in,
+            vs_tgt,
+            emb_dim,
+            max_length_input,
+            max_length_target,
+        )
 
+        # -------- Optional warm-start from weights --------
+        if (not train_from_scratch) and os.path.exists(weights_path):
+            print("Warm-start: loading previous weights from", weights_path)
+            try:
+                model.load_weights(weights_path)
+                print("✅ Successfully loaded previous weights.")
+            except Exception as e:
+                print("⚠️ Could not load previous weights, training from scratch instead. Reason:", e)
+        else:
+            if train_from_scratch:
+                print("train_from_scratch=True → starting from random init.")
+            else:
+                print("No previous weights file found → starting from random init.")
+
+        # -------- Optimizer: smaller LR + gradient clipping --------
         lr_schedule = ExponentialDecay(
-            initial_learning_rate=5e-5,
+            initial_learning_rate=3e-5,   # slightly safer than 5e-5
             decay_steps=20_000,
             decay_rate=0.98,
             staircase=True,
         )
 
-        base_opt = Adam(learning_rate=lr_schedule)
+        base_opt = Adam(
+            learning_rate=lr_schedule,
+            clipnorm=1.0,   # ★ gradient clipping to avoid NaNs
+        )
         opt = tf.keras.mixed_precision.LossScaleOptimizer(base_opt, dynamic=True)
+
         model.compile(
             optimizer=opt,
             loss="sparse_categorical_crossentropy",
             metrics=[tf.keras.metrics.SparseCategoricalAccuracy(name="token_accuracy")],
         )
+
+        # quick sanity check
         (enc_batch, dec_in_batch), dec_tgt_batch = next(iter(train_ds))
         logits = model([enc_batch, dec_in_batch], training=False)
         print(
@@ -734,7 +797,7 @@ def train_model(data_path, epochs=2, batch_size=32, emb_dim=50, train_from_scrat
             n_samples=n_rouge,
         )
 
-        save_cb = SaveOnAnyImprovement(model_path)
+        save_cb = SaveOnAnyImprovement(model_path, weights_path)
 
         callbacks = [
             rouge_cb,
@@ -747,6 +810,7 @@ def train_model(data_path, epochs=2, batch_size=32, emb_dim=50, train_from_scrat
             save_cb,
             snap_cb,
         ]
+
         history = model.fit(
             train_ds,
             epochs=epochs,
@@ -757,18 +821,19 @@ def train_model(data_path, epochs=2, batch_size=32, emb_dim=50, train_from_scrat
             validation_steps=val_steps,
         )
 
-    # after training: save tokenizers, plot history, return model
+    # -------- Save tokenizers + plots --------
     with open(tok_in_path, "w", encoding="utf-8") as f:
         f.write(tok_in.to_json())
-        f.flush()  # push Python buffer to OS
+        f.flush()
         os.fsync(f.fileno())
     with open(tok_tgt_path, "w", encoding="utf-8") as f:
         f.write(tok_tgt.to_json())
-        f.flush()  # push Python buffer to OS
+        f.flush()
         os.fsync(f.fileno())
 
     plot_history(history, os.path.dirname(model_path))
     return model
+
 
 
 if __name__ == "__main__":
