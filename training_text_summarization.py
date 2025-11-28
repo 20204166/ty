@@ -789,14 +789,28 @@ def train_model(data_path, epochs=2, batch_size=16, emb_dim=50, train_from_scrat
             global_clipnorm=1.0, # keep gradient clipping
         )
         opt = base_opt
+        
+        def masked_sparse_ce(y_true, y_pred):
+            # y_true: (batch, T), int32
+            # y_pred: (batch, T, vocab), logits
+            
+            loss_per_token = tf.keras.losses.sparse_categorical_crossentropy(
+                y_true, y_pred, from_logits=True
+            )
+            # mask out padding = 0 
+            
+            mask = tf.cast(tf.not_equal(y_true, 0), tf.float32)  # (batch, T)
+            
+            loss_per_token = loss_per_token * mask
+            
+            return tf.reduce_sum(loss_per_token) / (tf.reduce_sum(mask) + 1e-8)
 
-        loss_fn = tf.keras.losses.SparseCategoricalCrossentropy(
-            from_logits=True,
-        )
+
+      
 
         model.compile(
             optimizer=opt,
-            loss=loss_fn,
+            loss=masked_sparse_ce,
             metrics=[tf.keras.metrics.SparseCategoricalAccuracy(name="token_accuracy")],
         )
 
