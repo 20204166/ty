@@ -220,6 +220,36 @@ def prepare_decoder_sequences(sequences):
         dec_tgt = np.pad(dec_tgt, ((0, 0), (0, pad_width)), mode="constant")
     return dec_in, dec_tgt
 
+def masked_sparse_ce(y_true, y_pred):
+    """
+    Robust sparse CE with padding mask.
+    - y_true: (batch, T) int32, 0 = padding
+    - y_pred: (batch, T, vocab) logits
+    """
+    # 1) clamp logits so softmax / exp can't blow up
+    y_pred = tf.clip_by_value(y_pred, -20.0, 20.0)
+
+    # 2) numerically-stable per-token CE
+    #    tf.nn version is very robust
+    loss_per_token = tf.nn.sparse_softmax_cross_entropy_with_logits(
+        labels=y_true,   # (batch, T)
+        logits=y_pred,   # (batch, T, vocab)
+    )  # -> (batch, T)
+
+    # 3) replace non-finite tokens (inf / nan) with a big finite constant
+    loss_per_token = tf.where(
+        tf.math.is_finite(loss_per_token),
+        loss_per_token,
+        tf.zeros_like(loss_per_token) + 50.0,  # treat crazy tokens as loss=50
+    )
+
+    # 4) mask out padding tokens (id=0)
+    mask = tf.cast(tf.not_equal(y_true, 0), tf.float32)  # (batch, T)
+    loss_per_token = loss_per_token * mask
+
+    # 5) average over non-pad tokens only
+    denom = tf.reduce_sum(mask) + 1e-8
+    return tf.reduce_sum(loss_per_token) / denom
 
 def build_seq2seq_model(
     vocab_in,
@@ -789,25 +819,6 @@ def train_model(data_path, epochs=2, batch_size=16, emb_dim=50, train_from_scrat
             global_clipnorm=1.0, # keep gradient clipping
         )
         opt = base_opt
-        
-        def masked_sparse_ce(y_true, y_pred):
-            # y_true: (batch, T), int32
-            # y_pred: (batch, T, vocab), logits
-            
-            loss_per_token = tf.keras.losses.sparse_categorical_crossentropy(
-                y_true, y_pred, from_logits=True
-            )
-            # mask out padding = 0 
-            
-            mask = tf.cast(tf.not_equal(y_true, 0), tf.float32)  # (batch, T)
-            
-            loss_per_token = loss_per_token * mask
-            
-            return tf.reduce_sum(loss_per_token) / (tf.reduce_sum(mask) + 1e-8)
-
-
-      
-
         model.compile(
             optimizer=opt,
             loss=masked_sparse_ce,
