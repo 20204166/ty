@@ -227,9 +227,9 @@ def build_seq2seq_model(
     emb_dim,
     max_in,
     max_tgt,
-    enc_units=128,
-    dec_units=128,
-    dropout_rate=0.3,
+    enc_units=64,
+    dec_units=64,
+    dropout_rate=0.4,
 ):
     enc_inputs = Input(shape=(max_in,), name="enc_inputs")
     enc_emb = Embedding(vocab_in, emb_dim, name="enc_emb")(enc_inputs)
