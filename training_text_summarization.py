@@ -671,11 +671,6 @@ class CustomEval(Callback):
 
 
 def train_model(data_path, epochs=2, batch_size=16, emb_dim=50, train_from_scratch=False):
-    print("train_dec_tgt range:", train_dec_tgt.min(), train_dec_tgt.max())
-    print("vs_tgt:", vs_tgt)
-    print("Any NaN in train_dec_tgt?", np.isnan(train_dec_tgt).any())
-    print("Any NaN in train_enc?", np.isnan(train_enc).any())
-
     inputs, targets = load_training_data(data_path)
     split = int(0.9 * len(inputs))
     save_dir = "app/models/saved_model"
