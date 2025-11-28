@@ -115,6 +115,17 @@ def load_training_data(data_path: str, input_key: str = None, target_key: str = 
     """
     with open(data_path, "r", encoding="utf-8") as f:
         data = json.load(f)
+        cleaned = []
+        for item in data:
+            src = item.get("source") or item.get("text") or item.get("article")
+            tgt = item.get("target") or item.get("summary") or item.get("highlights")
+            if src is None or tgt is None:
+                cleaned.append(item)  # handled by branch logic below
+                continue
+            if str(src).strip() and str(tgt).strip():
+                cleaned.append(item)
+        data = cleaned
+
 
     if not data or not isinstance(data[0], dict):
         raise ValueError("Training data must be a non-empty list of objects.")
