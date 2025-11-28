@@ -30,6 +30,9 @@ from tensorflow.keras.optimizers.schedules import ExponentialDecay
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 from tensorflow.keras.preprocessing.text import Tokenizer
 
+os.environ["TF_XLA_FLAGS"] = "--tf_xla_auto_jit=0"
+os.environ["TF_XLA_ENABLE_XLA_DEVICES"] = "false"
+
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 USE_MULTI_GPU = True  # set False for 1 GPU, True for both
 
