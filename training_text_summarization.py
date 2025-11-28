@@ -222,37 +222,51 @@ def prepare_decoder_sequences(sequences):
 
 def masked_sparse_ce(y_true, y_pred):
     """
-    Robust sparse CE with padding mask.
-    - y_true: (batch, T) labels (may come in as float / int)
+    Stable sparse cross-entropy with padding mask.
+    - y_true: (batch, T) integer labels (0 = pad)
     - y_pred: (batch, T, vocab) logits
     """
-    # 0) force correct dtypes
-    y_true = tf.cast(y_true, tf.int32)      # sparse CE needs int32 / int64
-    y_pred = tf.cast(y_pred, tf.float32)    # logits in float32
+    # --- dtypes ---
+    y_true = tf.cast(y_true, tf.int32)
+    y_pred = tf.cast(y_pred, tf.float32)
+    
+    # --- vocab & label range ---
+    vocab_size = tf.shape(y_pred)[-1]
+    # Clamp labels into [0, vocab_size-1] just in case
+    y_true_clipped = tf.clip_by_value(y_true, 0, vocab_size - 1)
+    
+    # --- numerically stable log-softmax ---
+    # (extra clip is just paranoia)
+    y_pred = tf.clip_by_value(y_pred, -30.0, 30.0)
+    log_probs = tf.nn.log_softmax(y_pred, axis=-1)  # (B, T, V)
+    
+    # --- gather log p(true_class) for each token ---
+    batch_size = tf.shape(y_true_clipped)[0]
+    seq_len = tf.shape(y_true_clipped)[1]
 
-    # 1) clamp logits so softmax / exp can't blow up
-    y_pred = tf.clip_by_value(y_pred, -20.0, 20.0)
+    batch_idx = tf.range(batch_size)[:, tf.newaxis]          # (B, 1)
+    time_idx = tf.range(seq_len)[tf.newaxis, :]              # (1, T)
+    batch_idx = tf.tile(batch_idx, [1, seq_len])             # (B, T)
+    time_idx = tf.tile(time_idx, [batch_size, 1])            # (B, T)
 
-    # 2) numerically-stable per-token CE
-    loss_per_token = tf.nn.sparse_softmax_cross_entropy_with_logits(
-        labels=y_true,   # (batch, T), int32
-        logits=y_pred,   # (batch, T, vocab), float32
-    )  # -> (batch, T)
+    indices = tf.stack([batch_idx, time_idx, y_true_clipped], axis=-1)
+    # indices shape: (B, T, 3)
 
-    # 3) replace non-finite tokens (inf / nan) with a big finite constant
-    loss_per_token = tf.where(
-        tf.math.is_finite(loss_per_token),
-        loss_per_token,
-        tf.zeros_like(loss_per_token) + 50.0,  # treat crazy tokens as loss=50
-    )
+    true_log_probs = tf.gather_nd(log_probs, indices)        # (B, T)
 
-    # 4) mask out padding tokens (id=0)
-    mask = tf.cast(tf.not_equal(y_true, 0), tf.float32)  # (batch, T)
-    loss_per_token = loss_per_token * mask
+    # cross-entropy per token = -log p(true_class)
+    ce = -true_log_probs                                     # (B, T)
 
-    # 5) average over non-pad tokens only
+    # Replace any crazy values with a big but finite constant
+    ce = tf.where(tf.math.is_finite(ce), ce, tf.zeros_like(ce) + 50.0)
+
+    # --- mask padding (id=0) ---
+    mask = tf.cast(tf.not_equal(y_true_clipped, 0), tf.float32)  # (B, T)
+    ce = ce * mask
+
     denom = tf.reduce_sum(mask) + 1e-8
-    return tf.reduce_sum(loss_per_token) / denom
+    return tf.reduce_sum(ce) / denom
+
 
 
 def build_seq2seq_model(
@@ -827,6 +841,7 @@ def train_model(data_path, epochs=2, batch_size=16, emb_dim=50, train_from_scrat
             optimizer=opt,
             loss=masked_sparse_ce,
             metrics=[tf.keras.metrics.SparseCategoricalAccuracy(name="token_accuracy")],
+            run_eagerly=True,
         )
 
         # quick sanity check
