@@ -694,8 +694,6 @@ def train_model(data_path, epochs=2, batch_size=16, emb_dim=50, train_from_scrat
 
     # ---------------- Tokenizers ----------------
     train_in, train_tgt = inputs[:split], targets[:split]
-    print("Train_dec_tgt min / max:", train_dec_tgt.min(), train_dec_tgt.max())
-    print("Vocab size (vs_tgt):", vs_tgt)
     val_in, val_tgt = inputs[split:], targets[split:]
     if os.path.exists(tok_in_path) and os.path.exists(tok_tgt_path):
         tok_in = load_tokenizer(tok_in_path)
@@ -711,10 +709,15 @@ def train_model(data_path, epochs=2, batch_size=16, emb_dim=50, train_from_scrat
     train_enc = preprocess_texts(train_in, tok_in, max_length_input, vs_in)
     train_dec = preprocess_texts(train_tgt, tok_tgt, max_length_target, vs_tgt)
     train_dec_in, train_dec_tgt = prepare_decoder_sequences(train_dec)
+    
+    print("Train_dec_tgt min / max:", train_dec_tgt.min(), train_dec_tgt.max())
+    print("Vocab size (vs_tgt):", vs_tgt)
+
 
     val_enc = preprocess_texts(val_in, tok_in, max_length_input, vs_in)
     val_dec = preprocess_texts(val_tgt, tok_tgt, max_length_target, vs_tgt)
     val_dec_in, val_dec_tgt = prepare_decoder_sequences(val_dec)
+    print("Val_dec_tgt min / max:", val_dec_tgt.min(), val_dec_tgt.max())
 
     num_train = len(train_enc)
 
