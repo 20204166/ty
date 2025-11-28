@@ -220,52 +220,7 @@ def prepare_decoder_sequences(sequences):
         dec_tgt = np.pad(dec_tgt, ((0, 0), (0, pad_width)), mode="constant")
     return dec_in, dec_tgt
 
-def masked_sparse_ce(y_true, y_pred):
-    """
-    Stable sparse cross-entropy with padding mask.
-    - y_true: (batch, T) integer labels (0 = pad)
-    - y_pred: (batch, T, vocab) logits
-    """
-    # --- dtypes ---
-    y_true = tf.cast(y_true, tf.int32)
-    y_pred = tf.cast(y_pred, tf.float32)
-    
-    # --- vocab & label range ---
-    vocab_size = tf.shape(y_pred)[-1]
-    # Clamp labels into [0, vocab_size-1] just in case
-    y_true_clipped = tf.clip_by_value(y_true, 0, vocab_size - 1)
-    
-    # --- numerically stable log-softmax ---
-    # (extra clip is just paranoia)
-    y_pred = tf.clip_by_value(y_pred, -30.0, 30.0)
-    log_probs = tf.nn.log_softmax(y_pred, axis=-1)  # (B, T, V)
-    
-    # --- gather log p(true_class) for each token ---
-    batch_size = tf.shape(y_true_clipped)[0]
-    seq_len = tf.shape(y_true_clipped)[1]
 
-    batch_idx = tf.range(batch_size)[:, tf.newaxis]          # (B, 1)
-    time_idx = tf.range(seq_len)[tf.newaxis, :]              # (1, T)
-    batch_idx = tf.tile(batch_idx, [1, seq_len])             # (B, T)
-    time_idx = tf.tile(time_idx, [batch_size, 1])            # (B, T)
-
-    indices = tf.stack([batch_idx, time_idx, y_true_clipped], axis=-1)
-    # indices shape: (B, T, 3)
-
-    true_log_probs = tf.gather_nd(log_probs, indices)        # (B, T)
-
-    # cross-entropy per token = -log p(true_class)
-    ce = -true_log_probs                                     # (B, T)
-
-    # Replace any crazy values with a big but finite constant
-    ce = tf.where(tf.math.is_finite(ce), ce, tf.zeros_like(ce) + 50.0)
-
-    # --- mask padding (id=0) ---
-    mask = tf.cast(tf.not_equal(y_true_clipped, 0), tf.float32)  # (B, T)
-    ce = ce * mask
-
-    denom = tf.reduce_sum(mask) + 1e-8
-    return tf.reduce_sum(ce) / denom
 
 
 
@@ -832,11 +787,58 @@ def train_model(data_path, epochs=2, batch_size=16, emb_dim=50, train_from_scrat
         # -------- Optimizer: smaller LR + gradient clipping --------
 
 
-        base_opt = Adam(
-            learning_rate=5e-6, 
-            global_clipnorm=1.0, # keep gradient clipping
-        )
         opt = base_opt
+                base_opt = Adam(
+            learning_rate=5e-6,
+            global_clipnorm=1.0,  # keep gradient clipping
+        )
+
+        def masked_sparse_ce(y_true, y_pred):
+            """
+            Stable sparse cross-entropy with padding mask.
+            - y_true: (batch, T) integer labels (0 = pad)
+            - y_pred: (batch, T, vocab) logits
+            """
+            # --- dtypes ---
+            y_true = tf.cast(y_true, tf.int32)
+            y_pred = tf.cast(y_pred, tf.float32)
+
+            # --- vocab & label range ---
+            vocab_size = tf.shape(y_pred)[-1]
+            # Clamp labels into [0, vocab_size-1] just in case
+            y_true_clipped = tf.clip_by_value(y_true, 0, vocab_size - 1)
+
+            # --- numerically stable log-softmax ---
+            y_pred = tf.clip_by_value(y_pred, -30.0, 30.0)
+            log_probs = tf.nn.log_softmax(y_pred, axis=-1)  # (B, T, V)
+
+            # --- gather log p(true_class) for each token ---
+            batch_size = tf.shape(y_true_clipped)[0]
+            seq_len = tf.shape(y_true_clipped)[1]
+
+            batch_idx = tf.range(batch_size)[:, tf.newaxis]          # (B, 1)
+            time_idx = tf.range(seq_len)[tf.newaxis, :]              # (1, T)
+            batch_idx = tf.tile(batch_idx, [1, seq_len])             # (B, T)
+            time_idx = tf.tile(time_idx, [batch_size, 1])            # (B, T)
+
+            indices = tf.stack([batch_idx, time_idx, y_true_clipped], axis=-1)
+            # indices: (B, T, 3)
+
+            true_log_probs = tf.gather_nd(log_probs, indices)        # (B, T)
+
+            # cross-entropy per token = -log p(true_class)
+            ce = -true_log_probs                                     # (B, T)
+
+            # Replace any crazy values with a big but finite constant
+            ce = tf.where(tf.math.is_finite(ce), ce, tf.zeros_like(ce) + 50.0)
+
+            # --- mask padding (id=0) ---
+            mask = tf.cast(tf.not_equal(y_true_clipped, 0), tf.float32)  # (B, T)
+            ce = ce * mask
+
+            denom = tf.reduce_sum(mask) + 1e-8
+            return tf.reduce_sum(ce) / denom
+
         model.compile(
             optimizer=opt,
             loss=masked_sparse_ce,
