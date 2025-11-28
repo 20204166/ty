@@ -34,7 +34,7 @@ os.environ["TF_XLA_FLAGS"] = "--tf_xla_auto_jit=0"
 os.environ["TF_XLA_ENABLE_XLA_DEVICES"] = "false"
 
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
-USE_MULTI_GPU = True  # set False for 1 GPU, True for both
+USE_MULTI_GPU = False # set False for 1 GPU, True for both
 
 
 
@@ -733,7 +733,7 @@ class CustomEval(Callback):
         print(f"Validation token accuracy: {token_acc:.4f}")
 
 
-def train_model(data_path, epochs=2, batch_size=16, emb_dim=50, train_from_scratch=False):
+def train_model(data_path, epochs=5, batch_size=64, emb_dim=50, train_from_scratch=False):
     inputs, targets = load_training_data(data_path)
     split = int(0.9 * len(inputs))
     save_dir = "app/models/saved_model"
@@ -774,7 +774,7 @@ def train_model(data_path, epochs=2, batch_size=16, emb_dim=50, train_from_scrat
     num_train = len(train_enc)
 
     #  cap steps/epoch so Kaggle doesn't take 3h
-    MAX_STEPS_PER_EPOCH = 1000  # you can drop to 1000 if still too slow
+    MAX_STEPS_PER_EPOCH = 2000  # you can drop to 1000 if still too slow
     steps_per_epoch = min(
         MAX_STEPS_PER_EPOCH,
         max(1, num_train // batch_size),
