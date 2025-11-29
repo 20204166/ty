@@ -733,7 +733,7 @@ class CustomEval(Callback):
         print(f"Validation token accuracy: {token_acc:.4f}")
 
 
-def train_model(data_path, epochs=25, batch_size=64, emb_dim=50, train_from_scratch=False):
+def train_model(data_path, epochs=30, batch_size=64, emb_dim=50, train_from_scratch=False):
     inputs, targets = load_training_data(data_path)
     split = int(0.9 * len(inputs))
     save_dir = "app/models/saved_model"
@@ -798,7 +798,7 @@ def train_model(data_path, epochs=25, batch_size=64, emb_dim=50, train_from_scra
         len(val_enc) // batch_size + (1 if len(val_enc) % batch_size else 0),
     )
 
-    n_rouge = 50
+    n_rouge = 100
     rouge_ds = (
         tf.data.Dataset.from_tensor_slices(((val_enc, val_dec_in), val_dec_tgt))
         .shuffle(len(val_enc))
