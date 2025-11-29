@@ -931,7 +931,7 @@ def train_model(data_path, epochs=10, batch_size=32, emb_dim=50, train_from_scra
             try:
                 # Load what we can from the old checkpoint.
                 # by_name + skip_mismatch = ignore new layers like refine_*
-                model.load_weights(weights_path, by_name=True, skip_mismatch=True)
+                model.load_weights(weights_path) 
                 print("✅ Successfully loaded previous weights (by_name=True, skip_mismatch=True).")
             except Exception as e:
                 print("⚠️ Could not load previous weights, training from scratch instead. Reason:", e)
