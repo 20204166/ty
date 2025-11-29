@@ -461,13 +461,14 @@ def process_stack_smol_python(
 
     return out
 
-def process_linux_commands(
-    max_examples: int = 10_000,
-    max_desc_words: int = 64,
-) -> List[Dict]:
+def process_linux_commands_dataset(
+    max_examples: int = 100_000,
+    max_input_words: int = 64,
+    max_cmd_chars: int = 256,
+):
     """
-    Simple mapping command <-> description from hrsvrn/linux-commands-dataset.
-    We train NL -> command (user describes goal, model outputs command).
+    Shell / Linux one-liners from hrsvrn/linux-commands-dataset.
+    Columns: 'input' (NL description), 'output' (command).
     """
     try:
         ds = load_dataset("hrsvrn/linux-commands-dataset", split="train")
@@ -475,30 +476,33 @@ def process_linux_commands(
         print(f"⚠️ linux-commands-dataset not found – skipping. ({e})", file=sys.stderr)
         return []
 
-    out: List[Dict] = []
-    # You will want to inspect ds.column_names inside Kaggle once to see exact keys.
-    # Here we assume something like 'command' and 'description'.
-    for s in ds:
-        desc = clean_nl(s.get("description", ""))
-        cmd = clean_nl(s.get("command", ""))
+    out = []
+    for row in ds:
+        nl = clean_nl(row.get("input", ""))
+        cmd = row.get("output", "")
 
-        if not desc or not cmd:
+        if not nl or not cmd:
             continue
 
-        desc = truncate_words(desc, max_desc_words)
+        nl = truncate_words(nl, max_input_words)
+        cmd = str(cmd).strip()
+        if not cmd:
+            continue
+        if len(cmd) > max_cmd_chars:
+            cmd = cmd[:max_cmd_chars]
 
         source = (
             "[SHELL]\n"
-            "Given this description of what the user wants to do on Linux, "
-            "write the appropriate shell command:\n\n"
-            f"{desc}\n\nCommand:"
+            "Write a single Linux shell command that correctly performs this task:\n\n"
+            f"{nl}\n\nCommand:"
         )
 
         out.append(
             {
                 "source": source,
                 "target": cmd,
-                "task": "code_cpp",  # still in the code bucket
+                # treat shell as 'code' so it falls into your existing TASK_RATIOS
+                "task": "code_cpp",
             }
         )
 
@@ -615,6 +619,53 @@ def process_stackoverflow_linux(
             break
 
     return out
+    
+def process_hendrycks_math(
+    max_examples: int = 20_000,
+    max_q_words: int = 256,
+    max_a_words: int = 512,
+) -> List[Dict]:
+    """
+    University-level math problems from hendrycks_math.
+    Fields: 'problem', 'solution'.
+    """
+    try:
+        ds = load_dataset("hendrycks_math", "all", split="train")
+    except Exception as e:
+        print(f"⚠️ hendrycks_math not found – skipping. ({e})", file=sys.stderr)
+        return []
+
+    out: List[Dict] = []
+    for s in ds:
+        problem = clean_nl(s.get("problem", ""))
+        solution = clean_nl(s.get("solution", ""))
+
+        if not problem or not solution:
+            continue
+
+        problem = truncate_words(problem, max_q_words)
+        solution = truncate_words(solution, max_a_words)
+
+        source = (
+            "[MATH]\n"
+            "You are an expert university-level math tutor.\n"
+            "Solve the following problem step by step and give a final answer at the end:\n\n"
+            f"{problem}\n\nSolution:"
+        )
+
+        out.append(
+            {
+                "source": source,
+                "target": solution,
+                "task": "math",
+            }
+        )
+
+        if len(out) >= max_examples:
+            break
+
+    return out
+
     
 def process_simple_math(
     max_examples: int = 100_000,
@@ -879,11 +930,12 @@ def save_combined_data(
 
     # ---- Simple command mapping ----
     try:
-        linux_cmd_data = process_linux_commands(max_examples=10_000)
-        parts.extend(linux_cmd_data)
-        print(f"Processed linux-commands-dataset: {len(linux_cmd_data)} examples")
+        linux_data = process_linux_commands_dataset(max_examples=100_000)
+        parts.extend(linux_data)
+        print(f"Processed linux-commands-dataset: {len(linux_data)} examples")
     except Exception as e:
         print(f"⚠️ Error processing linux-commands-dataset: {e}", file=sys.stderr)
+
 
     # ---- Extra Python code: the-stack-smol-python ----
     try:
@@ -917,11 +969,12 @@ def save_combined_data(
 
     # ---- Advanced math (Hendrycks) ----
     try:
-        hendrycks_data = process_hendrycks_math(max_examples=30_000)
+        hendrycks_data = process_hendrycks_math(max_examples=min(20_000, max_math))
         parts.extend(hendrycks_data)
         print(f"Processed hendrycks_math: {len(hendrycks_data)} examples")
     except Exception as e:
         print(f"⚠️ Error processing hendrycks_math: {e}", file=sys.stderr)
+
     # ---- Custom ----
     
     if custom_jsonl:
@@ -970,8 +1023,8 @@ if __name__ == "__main__":
 
     save_combined_data(
         output_file=out_path,
-        max_per_summarization=100_000,  # tune for GPU budget
-        max_cpp=200_000,
-        max_math=100_000,
+        max_per_summarization=80_000,  # tune for GPU budget
+        max_cpp=150_000,
+        max_math=150_000,
         custom_jsonl=custom_path,
     )
