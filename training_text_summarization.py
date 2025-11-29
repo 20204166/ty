@@ -832,7 +832,7 @@ def configure_trainable_for_phase(model, phase: str):
     trainable_count = sum(int(l.trainable) for l in model.layers)
     print(f">>> Layers trainable this phase: {trainable_count} / {len(model.layers)}")
 
-def train_model(data_path, epochs=35, batch_size=128, emb_dim=50, train_from_scratch=False, phase="head_only"):
+def train_model(data_path, epochs=10, batch_size=128, emb_dim=50, train_from_scratch=False, phase="head_only"):
     inputs, targets = load_training_data(data_path)
     split = int(0.9 * len(inputs))
     save_dir = "app/models/saved_model"
