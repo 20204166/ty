@@ -16,10 +16,21 @@ with open("app/models/saved_model/tokenizer_input.json", "r", encoding="utf-8") 
 with open("app/models/saved_model/tokenizer_target.json", "r", encoding="utf-8") as f:
     tok_tgt = tokenizer_from_json(f.read())
 
-start_id = tok_tgt.word_index.get("<start>")
-end_id   = tok_tgt.word_index.get("<end>")
+# id of the OOV token (same one used in training)
+oov_id = tok_tgt.word_index.get(tok_tgt.oov_token)
 
-print("start_id:", start_id, "end_id:", end_id)
+# Try original "<start>", then plain "start", then fall back to OOV
+start_id = tok_tgt.word_index.get("<start>")
+if start_id is None:
+    start_id = tok_tgt.word_index.get("start", oov_id)
+
+# Try original "<end>", then plain "end"
+end_id = tok_tgt.word_index.get("<end>")
+if end_id is None:
+    end_id = tok_tgt.word_index.get("end", -1)  # -1: means "no special end" if not found
+
+print("oov_id:", oov_id, "start_id:", start_id, "end_id:", end_id)
+
 
 # -------------------------------------------------
 # 2) Load model (no compile needed)
