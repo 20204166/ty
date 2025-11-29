@@ -999,7 +999,7 @@ def train_model(data_path, epochs=35, batch_size=128, emb_dim=50, train_from_scr
             epochs=epochs,
             verbose=2,
             callbacks=callbacks,
-            initial_epoch=30, 
+            initial_epoch=0, 
             steps_per_epoch=steps_per_epoch,
             validation_data=val_ds,
             validation_steps=val_steps,
