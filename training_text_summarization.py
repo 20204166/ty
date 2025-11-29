@@ -733,7 +733,7 @@ class CustomEval(Callback):
         print(f"Validation token accuracy: {token_acc:.4f}")
 
 
-def train_model(data_path, epochs=5, batch_size=64, emb_dim=50, train_from_scratch=False):
+def train_model(data_path, epochs=20, batch_size=64, emb_dim=50, train_from_scratch=False):
     inputs, targets = load_training_data(data_path)
     split = int(0.9 * len(inputs))
     save_dir = "app/models/saved_model"
@@ -774,7 +774,7 @@ def train_model(data_path, epochs=5, batch_size=64, emb_dim=50, train_from_scrat
     num_train = len(train_enc)
 
     #  cap steps/epoch so Kaggle doesn't take 3h
-    MAX_STEPS_PER_EPOCH = 2000  # you can drop to 1000 if still too slow
+    MAX_STEPS_PER_EPOCH = 3500  # you can drop to 1000 if still too slow
     steps_per_epoch = min(
         MAX_STEPS_PER_EPOCH,
         max(1, num_train // batch_size),
@@ -899,6 +899,7 @@ def train_model(data_path, epochs=5, batch_size=64, emb_dim=50, train_from_scrat
             epochs=epochs,
             verbose=2,
             callbacks=callbacks,
+            initial_epoch=5, 
             steps_per_epoch=steps_per_epoch,
             validation_data=val_ds,
             validation_steps=val_steps,
