@@ -929,7 +929,7 @@ def train_model(data_path, epochs=10, batch_size=128, emb_dim=50, train_from_scr
         if (not train_from_scratch) and os.path.exists(weights_path):
             print("Warm-start: loading previous weights from", weights_path)
             try:
-                model.load_weights(weights_path, by_name=True, skip_mismatch=True)
+                mmodel.load_weights(weights_path)
                 print("✅ Successfully loaded previous weights.")
             except Exception as e:
                 print("⚠️ Could not load previous weights, training from scratch instead. Reason:", e)
