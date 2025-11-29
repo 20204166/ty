@@ -22,6 +22,7 @@ from tensorflow.keras.layers import (
     Dropout,
     LayerNormalization,
     Add,
+    MultiHeadAttention,
 )
 
 from tensorflow.keras.models import Model
@@ -43,9 +44,9 @@ max_length_input = 256
 max_length_target = 128
 # Desired task ratios for multi-task training (only used if the data has "task")
 TASK_RATIOS = {
-    "summarization": 0.5,
-    "code_cpp": 0.2,
-    "math": 0.4,
+    "summarization": 0.35,
+    "code_cpp": 0.35,
+    "math": 0.35,
 }
 # Optional cap on total number of examples after rebalancing
 TASK_MAX_TOTAL = None  # e.g. 500_000 or None for "whatever the data allows"
@@ -360,16 +361,59 @@ def build_seq2seq_model(
     )
 
     dec_norm = LayerNormalization(name="dec_ln")(fused)
+
+    # FFN on normalized fused representation
     dec_ffn = Dense(dec_units * 4, activation="relu", name="dec_ffn1")(dec_norm)
     dec_ffn = Dense(dec_units, name="dec_ffn2")(dec_ffn)
-    dec_context = Add(name="dec_ffn_res")([fused, dec_ffn])
-    
+
+    # Residual connection back to fused
+    dec_context_res = Add(name="dec_ffn_res")([fused, dec_ffn])
+
+    # 2nd LayerNorm on the residual output
+    dec_context = LayerNormalization(name="dec_ln2")(dec_context_res)
+
+    # ===== REFINE BLOCK (also 2× LayerNorm) =====
+
+    # LN before refine self-attention
+    refine_attn_norm = LayerNormalization(
+        name="refine_attn_ln"
+    )(dec_context)
+
+    refine_attn = MultiHeadAttention(
+        num_heads=4,
+        key_dim=dec_units // 4,
+        name="refine_self_attn",
+    )(refine_attn_norm, refine_attn_norm)
+
+    # Residual: attention + original dec_context
+    refine_attn_res = Add(name="refine_attn_res")([dec_context, refine_attn])
+
+    # LN before refine FFN
+    refine_ffn_norm = LayerNormalization(
+        name="refine_ffn_ln"
+    )(refine_attn_res)
+
+    refine_ffn = Dense(
+        dec_units * 4,
+        activation="relu",
+        name="refine_ffn1",
+    )(refine_ffn_norm)
+
+    refine_ffn = Dense(
+        dec_units,
+        name="refine_ffn2",
+    )(refine_ffn)
+
+    # Residual again
+    dec_final = Add(name="refine_ffn_res")([refine_attn_res, refine_ffn])
+
+    # Final logits from refined decoder representation
     outputs = Dense(
         vocab_tgt,
         activation=None,
         name="decoder_dense",
         dtype="float32",  # keep float32 with mixed precision
-    )(dec_context)
+    )(dec_final)
 
     model = Model([enc_inputs, dec_inputs], outputs)
     return model
@@ -732,8 +776,63 @@ class CustomEval(Callback):
         logs["val_token_accuracy"] = token_acc
         print(f"Validation token accuracy: {token_acc:.4f}")
 
+def configure_trainable_for_phase(model, phase: str):
+    """
+    Set layer.trainable flags based on a simple phase name.
+    This lets you freeze encoder / decoder / head / refine_* in stages.
+    """
+    phase = (phase or "all").lower()
+    print(f">>> Configuring trainable layers for phase = {phase!r}")
 
-def train_model(data_path, epochs=30, batch_size=64, emb_dim=50, train_from_scratch=False):
+    # default everything to frozen
+    for layer in model.layers:
+        layer.trainable = False
+
+    if phase == "all":
+        # everything can move
+        for layer in model.layers:
+            layer.trainable = True
+
+    elif phase == "encoder_frozen":
+        # freeze encoder (enc_*), train decoder / attn / refine_* / head
+        for layer in model.layers:
+            name = layer.name
+            if name.startswith("enc_"):
+                layer.trainable = False
+            else:
+                layer.trainable = True
+
+    elif phase == "decoder_frozen":
+        # train encoder only – keep decoder, refine_* & head frozen
+        for layer in model.layers:
+            name = layer.name
+            if (
+                name.startswith("dec_") or
+                name.startswith("refine_") or
+                name == "decoder_dense"
+            ):
+                layer.trainable = False
+            else:
+                layer.trainable = True
+
+    elif phase == "head_only":
+        # only train final head + refine block
+        for layer in model.layers:
+            name = layer.name
+            if name == "decoder_dense" or name.startswith("refine_"):
+                layer.trainable = True
+            else:
+                layer.trainable = False
+
+    else:
+        print(f"⚠️ Unknown phase {phase!r}, defaulting to all trainable")
+        for layer in model.layers:
+            layer.trainable = True
+
+    trainable_count = sum(int(l.trainable) for l in model.layers)
+    print(f">>> Layers trainable this phase: {trainable_count} / {len(model.layers)}")
+
+def train_model(data_path, epochs=35, batch_size=128, emb_dim=50, train_from_scratch=False, phase="head_only"):
     inputs, targets = load_training_data(data_path)
     split = int(0.9 * len(inputs))
     save_dir = "app/models/saved_model"
@@ -830,7 +929,7 @@ def train_model(data_path, epochs=30, batch_size=64, emb_dim=50, train_from_scra
         if (not train_from_scratch) and os.path.exists(weights_path):
             print("Warm-start: loading previous weights from", weights_path)
             try:
-                model.load_weights(weights_path)
+                model.load_weights(weights_path, by_name=True, skip_mismatch=True)
                 print("✅ Successfully loaded previous weights.")
             except Exception as e:
                 print("⚠️ Could not load previous weights, training from scratch instead. Reason:", e)
@@ -843,7 +942,8 @@ def train_model(data_path, epochs=30, batch_size=64, emb_dim=50, train_from_scra
 
 
         # -------- Optimizer: smaller LR + gradient clipping --------
-       
+        configure_trainable_for_phase(model, phase)
+
         base_opt = Adam(
             learning_rate=5e-6,
             global_clipnorm=1.0,  # gradient clipping
@@ -899,7 +999,7 @@ def train_model(data_path, epochs=30, batch_size=64, emb_dim=50, train_from_scra
             epochs=epochs,
             verbose=2,
             callbacks=callbacks,
-            initial_epoch=20, 
+            initial_epoch=30, 
             steps_per_epoch=steps_per_epoch,
             validation_data=val_ds,
             validation_steps=val_steps,
