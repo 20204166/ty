@@ -233,7 +233,53 @@ def process_xsum(
 # -----------------------------
 # 2) C++ code generation
 # -----------------------------
+def process_stackoverflow_linux(
+    max_examples: int = 30_000,
+    max_q_words: int = 256,
+    max_a_words: int = 256,
+) -> List[Dict]:
+    """
+    Linux / shell Q&A from KonradSzafer/stackoverflow_linux.
+    Fields: 'title', 'question', 'answer', 'url'.
+    We turn it into instruction-style shell tasks.
+    """
+    try:
+        ds = load_dataset("KonradSzafer/stackoverflow_linux", split="train")
+    except Exception as e:
+        print(f"⚠️ stackoverflow_linux not found – skipping. ({e})", file=sys.stderr)
+        return []
 
+    out: List[Dict] = []
+    for s in ds:
+        question = clean_nl(s.get("question", "")) or clean_nl(s.get("title", ""))
+        answer = clean_nl(s.get("answer", ""))
+
+        if not question or not answer:
+            continue
+
+        question = truncate_words(question, max_q_words)
+        answer = truncate_words(answer, max_a_words)
+
+        source = (
+            "[SHELL]\n"
+            "You are a Linux terminal expert. Answer the user's question with "
+            "the exact shell commands and a short explanation:\n\n"
+            f"{question}\n\nAnswer:"
+        )
+
+        out.append(
+            {
+                "source": source,
+                "target": answer,
+                # keep it in the code bucket so TASK_RATIOS still work
+                "task": "code_cpp",
+            }
+        )
+
+        if len(out) >= max_examples:
+            break
+
+    return out
 
 def process_cpp_vault(
     max_examples: int = 200_000,
@@ -414,6 +460,53 @@ def process_stack_smol_python(
             break
 
     return out
+
+def process_linux_commands(
+    max_examples: int = 10_000,
+    max_desc_words: int = 64,
+) -> List[Dict]:
+    """
+    Simple mapping command <-> description from hrsvrn/linux-commands-dataset.
+    We train NL -> command (user describes goal, model outputs command).
+    """
+    try:
+        ds = load_dataset("hrsvrn/linux-commands-dataset", split="train")
+    except Exception as e:
+        print(f"⚠️ linux-commands-dataset not found – skipping. ({e})", file=sys.stderr)
+        return []
+
+    out: List[Dict] = []
+    # You will want to inspect ds.column_names inside Kaggle once to see exact keys.
+    # Here we assume something like 'command' and 'description'.
+    for s in ds:
+        desc = clean_nl(s.get("description", ""))
+        cmd = clean_nl(s.get("command", ""))
+
+        if not desc or not cmd:
+            continue
+
+        desc = truncate_words(desc, max_desc_words)
+
+        source = (
+            "[SHELL]\n"
+            "Given this description of what the user wants to do on Linux, "
+            "write the appropriate shell command:\n\n"
+            f"{desc}\n\nCommand:"
+        )
+
+        out.append(
+            {
+                "source": source,
+                "target": cmd,
+                "task": "code_cpp",  # still in the code bucket
+            }
+        )
+
+        if len(out) >= max_examples:
+            break
+
+    return out
+
 def process_leetcode_dataset(
     max_examples: int = 5_000,
     max_problem_words: int = 256,
@@ -475,7 +568,54 @@ def process_leetcode_dataset(
 # 3) Math QA
 # -----------------------------
 
+def process_stackoverflow_linux(
+    max_examples: int = 30_000,
+    max_q_words: int = 256,
+    max_a_words: int = 256,
+) -> List[Dict]:
+    """
+    Linux / shell Q&A from KonradSzafer/stackoverflow_linux.
+    Fields: 'title', 'question', 'answer', 'url'.
+    We turn it into instruction-style shell tasks.
+    """
+    try:
+        ds = load_dataset("KonradSzafer/stackoverflow_linux", split="train")
+    except Exception as e:
+        print(f"⚠️ stackoverflow_linux not found – skipping. ({e})", file=sys.stderr)
+        return []
 
+    out: List[Dict] = []
+    for s in ds:
+        question = clean_nl(s.get("question", "")) or clean_nl(s.get("title", ""))
+        answer = clean_nl(s.get("answer", ""))
+
+        if not question or not answer:
+            continue
+
+        question = truncate_words(question, max_q_words)
+        answer = truncate_words(answer, max_a_words)
+
+        source = (
+            "[SHELL]\n"
+            "You are a Linux terminal expert. Answer the user's question with "
+            "the exact shell commands and a short explanation:\n\n"
+            f"{question}\n\nAnswer:"
+        )
+
+        out.append(
+            {
+                "source": source,
+                "target": answer,
+                # keep it in the code bucket so TASK_RATIOS still work
+                "task": "code_cpp",
+            }
+        )
+
+        if len(out) >= max_examples:
+            break
+
+    return out
+    
 def process_simple_math(
     max_examples: int = 100_000,
     max_q_words: int = 128,
@@ -729,6 +869,22 @@ def save_combined_data(
     except Exception as e:
         print(f"⚠️ Error processing codeparrot dataset: {e}", file=sys.stderr)
 
+    # ---- Shell / Linux Q&A ----
+    try:
+        so_linux_data = process_stackoverflow_linux(max_examples=30_000)
+        parts.extend(so_linux_data)
+        print(f"Processed StackOverflow Linux: {len(so_linux_data)} examples")
+    except Exception as e:
+        print(f"⚠️ Error processing StackOverflow Linux: {e}", file=sys.stderr)
+
+    # ---- Simple command mapping ----
+    try:
+        linux_cmd_data = process_linux_commands(max_examples=10_000)
+        parts.extend(linux_cmd_data)
+        print(f"Processed linux-commands-dataset: {len(linux_cmd_data)} examples")
+    except Exception as e:
+        print(f"⚠️ Error processing linux-commands-dataset: {e}", file=sys.stderr)
+
     # ---- Extra Python code: the-stack-smol-python ----
     try:
         py_smol_data = process_stack_smol_python(max_examples=30_000)
@@ -759,7 +915,15 @@ def save_combined_data(
     except Exception as e:
         print(f"⚠️ Error processing math_qa: {e}", file=sys.stderr)
 
+    # ---- Advanced math (Hendrycks) ----
+    try:
+        hendrycks_data = process_hendrycks_math(max_examples=30_000)
+        parts.extend(hendrycks_data)
+        print(f"Processed hendrycks_math: {len(hendrycks_data)} examples")
+    except Exception as e:
+        print(f"⚠️ Error processing hendrycks_math: {e}", file=sys.stderr)
     # ---- Custom ----
+    
     if custom_jsonl:
         custom_data = load_custom_jsonl(custom_jsonl)
         parts.extend(custom_data)
@@ -768,7 +932,7 @@ def save_combined_data(
     if not parts:
         raise RuntimeError("No data processed—check your datasets.")
 
-    # 🔥 Final safety pass: drop any examples with empty / whitespace-only source/target
+    #  Final safety pass: drop any examples with empty / whitespace-only source/target
     cleaned_parts = []
     for ex in parts:
         src = ex.get("source", "")
