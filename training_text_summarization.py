@@ -831,6 +831,46 @@ def configure_trainable_for_phase(model, phase: str):
 
     trainable_count = sum(int(l.trainable) for l in model.layers)
     print(f">>> Layers trainable this phase: {trainable_count} / {len(model.layers)}")
+    
+def warm_start_from_old_model(model, old_model_path):
+    """
+    Load an old full .keras model and copy weights layer-by-layer
+    into the new model wherever names and shapes match.
+    New layers (dec_ln2, refine_*, etc.) will just stay random.
+    """
+    if not os.path.exists(old_model_path):
+        print(f"⚠️ No previous .keras model at {old_model_path}, skipping warm-start.")
+        return
+
+    try:
+        print(f"Loading old .keras model from {old_model_path} for warm-start...")
+        old_model = tf.keras.models.load_model(old_model_path, compile=False)
+    except Exception as e:
+        print("⚠️ Could not load old .keras model, skipping warm-start. Reason:", e)
+        return
+
+    copied, skipped = 0, 0
+    for layer in model.layers:
+        try:
+            old_layer = old_model.get_layer(layer.name)
+        except ValueError:
+            # layer with this name didn't exist before
+            skipped += 1
+            continue
+
+        old_weights = old_layer.get_weights()
+        if not old_weights:
+            skipped += 1
+            continue
+
+        try:
+            layer.set_weights(old_weights)
+            copied += 1
+        except Exception:
+            skipped += 1
+            continue
+
+    print(f"✅ Warm-start finished: copied weights for {copied} layers, skipped {skipped}.")
 
 def train_model(data_path, epochs=10, batch_size=32, emb_dim=50, train_from_scratch=False, phase="head_only"):
     inputs, targets = load_training_data(data_path)
@@ -926,20 +966,11 @@ def train_model(data_path, epochs=10, batch_size=32, emb_dim=50, train_from_scra
         )
 
         # -------- Optional warm-start from weights --------
-        if (not train_from_scratch) and os.path.exists(weights_path):
-            print("Warm-start: loading previous weights from", weights_path)
-            try:
-                # Load what we can from the old checkpoint.
-                # by_name + skip_mismatch = ignore new layers like refine_*
-                model.load_weights(weights_path) 
-                print("✅ Successfully loaded previous weights (by_name=True, skip_mismatch=True).")
-            except Exception as e:
-                print("⚠️ Could not load previous weights, training from scratch instead. Reason:", e)
+        if not train_from_scratch:
+            warm_start_from_old_model(model, model_path)
         else:
-            if train_from_scratch:
-                print("train_from_scratch=True → starting from random init.")
-            else:
-                print("No previous weights file found → starting from random init.")
+            print("train_from_scratch=True → starting from random init.")
+
 
         # -------- Optimizer: smaller LR + gradient clipping --------
         configure_trainable_for_phase(model, phase)
