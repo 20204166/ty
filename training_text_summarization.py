@@ -832,7 +832,7 @@ def configure_trainable_for_phase(model, phase: str):
     trainable_count = sum(int(l.trainable) for l in model.layers)
     print(f">>> Layers trainable this phase: {trainable_count} / {len(model.layers)}")
 
-def train_model(data_path, epochs=10, batch_size=128, emb_dim=50, train_from_scratch=False, phase="head_only"):
+def train_model(data_path, epochs=10, batch_size=32, emb_dim=50, train_from_scratch=False, phase="head_only"):
     inputs, targets = load_training_data(data_path)
     split = int(0.9 * len(inputs))
     save_dir = "app/models/saved_model"
@@ -929,8 +929,10 @@ def train_model(data_path, epochs=10, batch_size=128, emb_dim=50, train_from_scr
         if (not train_from_scratch) and os.path.exists(weights_path):
             print("Warm-start: loading previous weights from", weights_path)
             try:
-                mmodel.load_weights(weights_path)
-                print("✅ Successfully loaded previous weights.")
+                # Load what we can from the old checkpoint.
+                # by_name + skip_mismatch = ignore new layers like refine_*
+                model.load_weights(weights_path, by_name=True, skip_mismatch=True)
+                print("✅ Successfully loaded previous weights (by_name=True, skip_mismatch=True).")
             except Exception as e:
                 print("⚠️ Could not load previous weights, training from scratch instead. Reason:", e)
         else:
@@ -938,8 +940,6 @@ def train_model(data_path, epochs=10, batch_size=128, emb_dim=50, train_from_scr
                 print("train_from_scratch=True → starting from random init.")
             else:
                 print("No previous weights file found → starting from random init.")
-          
-
 
         # -------- Optimizer: smaller LR + gradient clipping --------
         configure_trainable_for_phase(model, phase)
