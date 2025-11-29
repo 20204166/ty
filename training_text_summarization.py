@@ -43,8 +43,8 @@ max_length_input = 256
 max_length_target = 128
 # Desired task ratios for multi-task training (only used if the data has "task")
 TASK_RATIOS = {
-    "summarization": 0.4,
-    "code_cpp": 0.3,
+    "summarization": 0.5,
+    "code_cpp": 0.2,
     "math": 0.4,
 }
 # Optional cap on total number of examples after rebalancing
@@ -733,7 +733,7 @@ class CustomEval(Callback):
         print(f"Validation token accuracy: {token_acc:.4f}")
 
 
-def train_model(data_path, epochs=20, batch_size=64, emb_dim=50, train_from_scratch=False):
+def train_model(data_path, epochs=25, batch_size=64, emb_dim=50, train_from_scratch=False):
     inputs, targets = load_training_data(data_path)
     split = int(0.9 * len(inputs))
     save_dir = "app/models/saved_model"
@@ -845,7 +845,7 @@ def train_model(data_path, epochs=20, batch_size=64, emb_dim=50, train_from_scra
         # -------- Optimizer: smaller LR + gradient clipping --------
        
         base_opt = Adam(
-            learning_rate=1e-5,
+            learning_rate=5e-6,
             global_clipnorm=1.0,  # gradient clipping
         )
         opt = base_opt
@@ -899,7 +899,7 @@ def train_model(data_path, epochs=20, batch_size=64, emb_dim=50, train_from_scra
             epochs=epochs,
             verbose=2,
             callbacks=callbacks,
-            initial_epoch=5, 
+            initial_epoch=20, 
             steps_per_epoch=steps_per_epoch,
             validation_data=val_ds,
             validation_steps=val_steps,
