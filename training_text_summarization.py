@@ -43,9 +43,9 @@ max_length_input = 256
 max_length_target = 128
 # Desired task ratios for multi-task training (only used if the data has "task")
 TASK_RATIOS = {
-    "summarization": 0.5,
-    "code_cpp": 0.2,
-    "math": 0.3,
+    "summarization": 0.3,
+    "code_cpp": 0.3,
+    "math": 0.4,
 }
 # Optional cap on total number of examples after rebalancing
 TASK_MAX_TOTAL = None  # e.g. 500_000 or None for "whatever the data allows"
@@ -798,7 +798,7 @@ def train_model(data_path, epochs=5, batch_size=64, emb_dim=50, train_from_scrat
         len(val_enc) // batch_size + (1 if len(val_enc) % batch_size else 0),
     )
 
-    n_rouge = 8
+    n_rouge = 50
     rouge_ds = (
         tf.data.Dataset.from_tensor_slices(((val_enc, val_dec_in), val_dec_tgt))
         .shuffle(len(val_enc))
@@ -845,7 +845,7 @@ def train_model(data_path, epochs=5, batch_size=64, emb_dim=50, train_from_scrat
         # -------- Optimizer: smaller LR + gradient clipping --------
        
         base_opt = Adam(
-            learning_rate=1e-6,
+            learning_rate=1e-5,
             global_clipnorm=1.0,  # gradient clipping
         )
         opt = base_opt
@@ -882,7 +882,7 @@ def train_model(data_path, epochs=5, batch_size=64, emb_dim=50, train_from_scrat
         save_cb = SaveOnAnyImprovement(model_path, weights_path)
 
         callbacks = [
-            debug_cb,
+            rouge_cb,
             EarlyStopping(
                 monitor="val_token_accuracy",
                 mode="max",
