@@ -1257,7 +1257,7 @@ def train_model(data_path, epochs=10, batch_size=64, emb_dim=50, train_from_scra
             weights_path=weights_path,
             monitor="val_token_accuracy",
             mode="max",          # accuracy should increase
-            min_acc_gain=0.001,  # how much better acc must be
+            min_acc_gain=0.0005,  # how much better acc must be
             max_loss_increase=0.10,
         )
 
@@ -1267,7 +1267,7 @@ def train_model(data_path, epochs=10, batch_size=64, emb_dim=50, train_from_scra
             EarlyStopping(
                 monitor="val_token_accuracy",
                 mode="max",
-                patience=5,
+                patience=8,
                 restore_best_weights=True,
             ),
             save_cb,
