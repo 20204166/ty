@@ -1080,7 +1080,11 @@ def warm_start_from_old_model(model, old_model_path):
 
     try:
         print(f"Loading old .keras model from {old_model_path} for warm-start...")
-        old_model = tf.keras.models.load_model(old_model_path, compile=False)
+        old_model = tf.keras.models.load_model(
+            old_model_path, 
+            compile=False, 
+            safe_mode=False,
+        )
     except Exception as e:
         print("⚠️ Could not load old .keras model, skipping warm-start. Reason:", e)
         return
