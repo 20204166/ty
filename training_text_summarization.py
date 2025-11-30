@@ -23,6 +23,7 @@ from tensorflow.keras.layers import (
     LayerNormalization,
     Add,
     MultiHeadAttention,
+    Lambda,
 )
 
 from tensorflow.keras.models import Model
@@ -44,9 +45,9 @@ max_length_input = 256
 max_length_target = 128
 # Desired task ratios for multi-task training (only used if the data has "task")
 TASK_RATIOS = {
-    "summarization": 0.4,
-    "code_cpp": 0.3,
-    "math": 0.35,
+    "summarization": 0.2,
+    "code_cpp": 0.4,
+    "math": 0.4,
 }
 # Optional cap on total number of examples after rebalancing
 TASK_MAX_TOTAL = None  # e.g. 500_000 or None for "whatever the data allows"
@@ -326,6 +327,58 @@ def build_seq2seq_model(
     enc_ffn = Dense(enc_units, name="enc_ffn2")(enc_ffn)
     enc_outs = Add(name="enc_ffn_res")([enc_outs, enc_ffn])
 
+    # ===== GLOBAL ENCODER BLOCK (hierarchical on encoder side) =====
+    # enc_outs: (B, T_enc, enc_units)
+
+    genc_ln1 = LayerNormalization(name="genc_ln1")(enc_outs)
+
+    # Pool over time to get a global summary
+    genc_pool = tf.reduce_mean(
+        genc_ln1,
+        axis=1,
+        keepdims=False,
+        name="genc_pool_mean",     
+    )
+
+    # Turn pooled vector into a "global query"
+    genc_query = Dense(
+        enc_units,
+        activation="tanh",
+        name="genc_query",
+    )(genc_pool)                   # (B, enc_units)
+    genc_query = tf.expand_dims(
+        genc_query,
+        axis=1,
+        name="genc_query_expand",  # (B, 1, enc_units)
+    )
+
+    # Multi-head attention: global token attends over full encoder sequence
+    genc_attn = MultiHeadAttention(
+        num_heads=4,
+        key_dim=enc_units // 4,
+        name="genc_mha",
+    )(query=genc_query, value=genc_ln1, key=genc_ln1)  # (B, 1, enc_units)
+ 
+    # ---- encoder global broadcast ----
+    genc_broadcast = Lambda(
+        lambda pair: tf.tile(
+            pair[0], [1, tf.shape(pair[1])[1], 1]
+        ),
+        name="genc_broadcast",
+    )([genc_attn, enc_outs])
+
+
+    # Residual: add global context onto encoder outputs
+    genc_res1 = Add(name="genc_res1")([enc_outs, genc_broadcast])
+
+    genc_ln2 = LayerNormalization(name="genc_ln2")(genc_res1)
+    genc_ffn1 = Dense(enc_units * 4, activation="relu", name="genc_ffn1")(genc_ln2)
+    genc_ffn2 = Dense(enc_units, name="genc_ffn2")(genc_ffn1)
+
+    enc_outs = Add(name="genc_ffn_res")([genc_ln2, genc_ffn2])
+    # enc_outs stays shape (B, T_enc, enc_units) but is now globally enriched
+
+
     # Decoder: 2-layer LSTM
     dec_inputs = Input(shape=(max_tgt,), name="dec_inputs")
     dec_emb = Embedding(vocab_tgt, emb_dim, name="dec_emb")(dec_inputs)
@@ -371,6 +424,54 @@ def build_seq2seq_model(
 
     # 2nd LayerNorm on the residual output
     dec_context = LayerNormalization(name="dec_ln2")(dec_context_res)
+
+    # ===== GLOBAL DECODER BLOCK (hierarchical on decoder side) =====
+    
+
+    gdec_ln1 = LayerNormalization(name="gdec_ln1")(dec_context)
+
+    # Pool over time (global token)
+    gdec_pool = tf.reduce_mean(
+        gdec_ln1,
+        axis=1,
+        keepdims=False,
+        name="gdec_pool_mean",      # (B, dec_units)
+    )
+
+    gdec_query = Dense(
+        dec_units,
+        activation="tanh",
+        name="gdec_query",
+    )(gdec_pool)                    # (B, dec_units)
+    gdec_query = tf.expand_dims(
+        gdec_query,
+        axis=1,
+        name="gdec_query_expand",   # (B, 1, dec_units)
+    )
+
+    gdec_attn = MultiHeadAttention(
+        num_heads=4,
+        key_dim=dec_units // 4,
+        name="gdec_mha",
+    )(query=gdec_query, value=gdec_ln1, key=gdec_ln1)  # (B, 1, dec_units)
+
+    # ---- decoder global broadcast ----
+    gdec_broadcast = Lambda(
+        lambda pair: tf.tile(
+            pair[0], [1, tf.shape(pair[1])[1], 1]
+        ),
+        name="gdec_broadcast",
+    )([gdec_attn, dec_context])
+
+    gdec_res1 = Add(name="gdec_res1")([dec_context, gdec_broadcast])
+
+    gdec_ln2 = LayerNormalization(name="gdec_ln2")(gdec_res1)
+    gdec_ffn1 = Dense(dec_units * 4, activation="relu", name="gdec_ffn1")(gdec_ln2)
+    gdec_ffn2 = Dense(dec_units, name="gdec_ffn2")(gdec_ffn1)
+
+    dec_context = Add(name="gdec_ffn_res")([gdec_ln2, gdec_ffn2])
+    # dec_context now = GLOBAL + local, same shape as before
+
 
     # ===== REFINE BLOCK (also 2× LayerNorm) =====
 
@@ -664,22 +765,32 @@ class RougeCallback(Callback):
 
         dec_input = tf.fill([batch, 1], self.start_id)
         result = tf.zeros([batch, 0], dtype=tf.int32)
-        for t in range(self.max_length):
+        for _ in range(self.max_length):
             pad_amt = self.max_length - tf.shape(dec_input)[1]
             dec_padded = tf.pad(dec_input, [[0, 0], [0, pad_amt]])
             logits = self.model([enc_batch, dec_padded], training=False)
-            next_token = tf.cast(tf.argmax(logits[:, t, :], axis=-1), tf.int32)
+        
+            next_token = tf.cast(tf.argmax(logits[:, tf.shape(dec_input)[1]-1, :], axis=-1), tf.int32)
+            
             dec_input = tf.concat([dec_input, next_token[:, None]], axis=1)
             result = tf.concat([result, next_token[:, None]], axis=1)
 
+
         count = 0
         for ref_seq, pred_seq in zip(dec_tgt_batch.numpy(), result.numpy()):
-            ref_txt = " ".join(
-                self.tokenizer.index_word[w] for w in ref_seq if w not in (0, self.start_id, self.end_id)
-            )
-            pred_txt = " ".join(
-                self.tokenizer.index_word.get(w, "") for w in pred_seq if w not in (0, self.start_id, self.end_id)
-            )
+            def seq_to_text(seq):
+                words = []
+                for w in seq:
+                    if w in (0, self.start_id):
+                        continue
+                    if w == self.end_id:
+                        break
+                    words.append(self.tokenizer.index_word.get(w, ""))
+                return " ".join(words)
+                
+            ref_txt  = seq_to_text(ref_seq)
+            pred_txt = seq_to_text(pred_seq)
+            
             sc = self.scorer.score(ref_txt, pred_txt)
             total["rouge1"] += sc["rouge1"].fmeasure
             total["rouge2"] += sc["rouge2"].fmeasure
@@ -823,6 +934,15 @@ def configure_trainable_for_phase(model, phase: str):
                 layer.trainable = True
             else:
                 layer.trainable = False
+                
+    elif phase == "global_only":
+        #  ONLY train the new hierarchical / global blocks
+        for layer in model.layers:
+            name = layer.name
+            if name.startswith("global_") or name.startswith("hier_"):
+                layer.trainable = True
+            else:
+                layer.trainable = False
 
     else:
         print(f"⚠️ Unknown phase {phase!r}, defaulting to all trainable")
@@ -872,7 +992,7 @@ def warm_start_from_old_model(model, old_model_path):
 
     print(f"✅ Warm-start finished: copied weights for {copied} layers, skipped {skipped}.")
 
-def train_model(data_path, epochs=4, batch_size=64, emb_dim=50, train_from_scratch=False, phase="all"):
+def train_model(data_path, epochs=20, batch_size=64, emb_dim=50, train_from_scratch=False, phase="global_only"):
     inputs, targets = load_training_data(data_path)
     split = int(0.9 * len(inputs))
     save_dir = "app/models/saved_model"
