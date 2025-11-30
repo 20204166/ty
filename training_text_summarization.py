@@ -795,58 +795,182 @@ class RougeCallback(Callback):
 
 
 class SaveOnAnyImprovement(tf.keras.callbacks.Callback):
-    def __init__(self, model_path, weights_path, monitor="val_rouge1"):
+    def __init__(
+        self,
+        model_path,
+        weights_path,
+        monitor="val_token_accuracy",  # primary metric to "watch"
+        mode="max",                    # "max" for acc/rouge, "min" for loss
+        min_acc_gain=0.001,            # extra condition for token_acc
+        max_loss_increase=0.10,        # allow up to +10% worse loss when saving on acc
+    ):
         super().__init__()
-        self.model_path = model_path       # full .keras model
-        self.weights_path = weights_path   # weights .h5
+        self.model_path = model_path
+        self.weights_path = weights_path
         self.monitor = monitor
+        if mode not in ("min", "max"):
+            raise ValueError("mode must be 'min' or 'max'")
+        self.mode = mode
+
+        self.min_acc_gain = float(min_acc_gain)
+        self.max_loss_increase = float(max_loss_increase)
+
+        # where we persist best metrics across runs
+        self.best_file = weights_path + ".best.json"
+
+        # defaults if nothing on disk yet
+        if self.mode == "min":
+            self.best_primary = float("inf")
+        else:
+            self.best_primary = float("-inf")
+
         self.best_loss = float("inf")
         self.best_acc = 0.0
-        self.best_rouges = [0.0, 0.0, 0.0]  # [rouge1, rouge2, rougeL]
+        self.best_rouges = {
+            "val_rouge1": 0.0,
+            "val_rouge2": 0.0,
+            "val_rougeL": 0.0,
+        }
+
+        # try to load previous best values
+        if os.path.exists(self.best_file):
+            try:
+                with open(self.best_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if self.monitor in data:
+                    self.best_primary = float(data[self.monitor])
+                if "val_loss" in data:
+                    self.best_loss = float(data["val_loss"])
+                if "val_token_accuracy" in data:
+                    self.best_acc = float(data["val_token_accuracy"])
+                for k in self.best_rouges.keys():
+                    if k in data:
+                        self.best_rouges[k] = float(data[k])
+
+                print(
+                    f"[SaveOnAnyImprovement] Loaded previous bests: "
+                    f"{self.monitor}={self.best_primary:.6f}, "
+                    f"val_loss={self.best_loss:.6f}, "
+                    f"val_token_accuracy={self.best_acc:.6f}, "
+                    f"ROUGE1={self.best_rouges['val_rouge1']:.4f}, "
+                    f"ROUGEL={self.best_rouges['val_rougeL']:.4f}"
+                )
+            except Exception as e:
+                print(
+                    f"[SaveOnAnyImprovement] Could not read {self.best_file} "
+                    f"({e}), starting fresh."
+                )
+
+    def _primary_improved(self, current):
+        if self.mode == "min":
+            return current < self.best_primary
+        else:
+            return current > self.best_primary
 
     def on_epoch_end(self, epoch, logs=None):
         logs = logs or {}
+
+        # pull all metrics we might use
+        current_primary = logs.get(self.monitor)
         new_loss = logs.get("val_loss")
         new_acc = logs.get("val_token_accuracy")
-        new_rouges = [logs.get(f"val_rouge{i}") for i in [1, 2, "L"]]
+        new_r1 = logs.get("val_rouge1")
+        new_r2 = logs.get("val_rouge2")
+        new_rL = logs.get("val_rougeL")
 
         should_save = False
-        save_reasons = []
+        reasons = []
 
-        # Primary: ROUGE
-        if new_rouges[0] is not None and new_rouges[0] > self.best_rouges[0]:
+        # 1) "monitor" logic like ModelCheckpoint (primary metric)
+        if current_primary is not None and self._primary_improved(current_primary):
             should_save = True
-            save_reasons.append(f"val_rouge1 ↑ {new_rouges[0]:.4f}")
-        if new_rouges[2] is not None and new_rouges[2] > self.best_rouges[2]:
-            should_save = True
-            save_reasons.append(f"val_rougeL ↑ {new_rouges[2]:.4f}")
+            reasons.append(
+                f"{self.monitor} improved {self.best_primary:.6f} → {float(current_primary):.6f}"
+            )
 
-        # Secondary: token accuracy with loss constraint
-        if (
-            new_acc is not None
-            and new_loss is not None
-            and new_acc > self.best_acc + 0.001
-            and new_loss < self.best_loss * 1.1
-        ):
+        # 2) ROUGE-based triggers (like your old version)
+        if new_r1 is not None and new_r1 > self.best_rouges["val_rouge1"]:
             should_save = True
-            save_reasons.append(f"val_token_accuracy ↑ {new_acc:.4f}")
+            reasons.append(f"val_rouge1 ↑ {self.best_rouges['val_rouge1']:.4f} → {new_r1:.4f}")
 
-        if should_save or not os.path.exists(self.weights_path):
-            # Save full model + weights
+        if new_rL is not None and new_rL > self.best_rouges["val_rougeL"]:
+            should_save = True
+            reasons.append(f"val_rougeL ↑ {self.best_rouges['val_rougeL']:.4f} → {new_rL:.4f}")
+
+        # 3) token_accuracy with loss guard
+        if new_acc is not None and new_loss is not None:
+            acc_improved = new_acc > self.best_acc + self.min_acc_gain
+            loss_not_too_bad = new_loss < self.best_loss * (1.0 + self.max_loss_increase)
+            if acc_improved and loss_not_too_bad:
+                should_save = True
+                reasons.append(
+                    f"val_token_accuracy ↑ {self.best_acc:.4f} → {new_acc:.4f} "
+                    f"with val_loss {new_loss:.4f} (best {self.best_loss:.4f})"
+                )
+
+        # if we never saved before but have some metrics, save at least once
+        if not os.path.exists(self.weights_path) and current_primary is not None:
+            should_save = True
+            reasons.append(f"first time saving {self.monitor}={float(current_primary):.6f}")
+
+        # --- actually save if ANY of the above fired ---
+        if should_save:
+            # update bests
+            if current_primary is not None:
+                self.best_primary = float(current_primary)
+
+            if new_loss is not None:
+                self.best_loss = min(self.best_loss, float(new_loss))
+
+            if new_acc is not None:
+                self.best_acc = max(self.best_acc, float(new_acc))
+
+            if new_r1 is not None:
+                self.best_rouges["val_rouge1"] = max(
+                    self.best_rouges["val_rouge1"], float(new_r1)
+                )
+            if new_r2 is not None:
+                self.best_rouges["val_rouge2"] = max(
+                    self.best_rouges["val_rouge2"], float(new_r2)
+                )
+            if new_rL is not None:
+                self.best_rouges["val_rougeL"] = max(
+                    self.best_rouges["val_rougeL"], float(new_rL)
+                )
+
+            # write all bests to json so resume works
+            best_dict = {
+                self.monitor: self.best_primary,
+                "val_loss": self.best_loss,
+                "val_token_accuracy": self.best_acc,
+                **self.best_rouges,
+            }
+            try:
+                with open(self.best_file, "w", encoding="utf-8") as f:
+                    json.dump(best_dict, f)
+            except Exception as e:
+                print(f"[SaveOnAnyImprovement] Warning: could not write best file: {e}")
+
+            # save model + weights
             self.model.save(self.model_path, overwrite=True)
             self.model.save_weights(self.weights_path, overwrite=True)
-            print(f"✔️ Saved model at epoch {epoch + 1} because {', '.join(save_reasons)}")
 
-        # Update best metrics
-        if new_loss is not None:
-            self.best_loss = min(self.best_loss, new_loss)
-        if new_acc is not None:
-            self.best_acc = max(self.best_acc, new_acc)
-        self.best_rouges = [
-            max(nr if nr is not None else 0.0, br)
-            for nr, br in zip(new_rouges, self.best_rouges)
-        ]
-
+            print(
+                f"✔️ Saved model at epoch {epoch+1} because: "
+                + " | ".join(reasons)
+            )
+        else:
+            if current_primary is not None:
+                print(
+                    f"[SaveOnAnyImprovement] No improvement this epoch. "
+                    f"{self.monitor}={float(current_primary):.6f}, "
+                    f"best={self.best_primary:.6f}"
+                )
+            else:
+                print(
+                    f"[SaveOnAnyImprovement] {self.monitor} not in logs at epoch "
+                    f"{epoch+1}, nothing to compare."
+                )
 
 class DebugLoss(Callback):
     def on_train_batch_end(self, batch, logs=None):
@@ -1122,7 +1246,15 @@ def train_model(data_path, epochs=20, batch_size=64, emb_dim=50, train_from_scra
             n_samples=n_rouge,
         )
 
-        save_cb = SaveOnAnyImprovement(model_path, weights_path)
+        save_cb = SaveOnAnyImprovement(
+            model_path=model_path,
+            weights_path=weights_path,
+            monitor="val_token_accuracy",
+            mode="max",          # accuracy should increase
+            min_acc_gain=0.001,  # how much better acc must be
+            max_loss_increase=0.10,
+        )
+
 
         callbacks = [
             rouge_cb,
