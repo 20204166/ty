@@ -808,6 +808,231 @@ def process_math_qa(
             break
 
     return out
+def process_arc_ai2(
+    max_examples: int = 20_000,
+    max_q_words: int = 128,
+) -> List[Dict]:
+    """
+    Multi-choice reasoning from ai2_arc (ARC-Easy + ARC-Challenge).
+    Fields: 'question', 'choices'['text','label'], 'answerKey'.
+    We train the model to output just the correct letter.
+    """
+    try:
+        ds_easy = load_dataset("ai2_arc", "ARC-Easy", split="train")
+        ds_challenge = load_dataset("ai2_arc", "ARC-Challenge", split="train")
+    except Exception as e:
+        print(f"⚠️ ai2_arc not found – skipping. ({e})", file=sys.stderr)
+        return []
+
+    combined = list(ds_easy) + list(ds_challenge)
+    random.shuffle(combined)
+
+    out: List[Dict] = []
+    for s in combined:
+        q = clean_nl(s.get("question", ""))
+        choices = s.get("choices", {}) or {}
+        texts = choices.get("text", []) or []
+        labels = choices.get("label", []) or []
+        answer_key = (s.get("answerKey", "") or "").strip()
+
+        if not q or not texts or not labels or not answer_key:
+            continue
+
+        q = truncate_words(q, max_q_words)
+
+        option_lines = []
+        for lab, txt in zip(labels, texts):
+            option_lines.append(f"{lab}. {clean_nl(txt)}")
+        options_str = "\n".join(option_lines)
+
+        source = (
+            "[MATH]\n"
+            "You are a reasoning assistant. Read the question and choose the correct option.\n\n"
+            f"Question: {q}\n\n"
+            f"Options:\n{options_str}\n\n"
+            "Answer with the letter of the correct option.\n\n"
+            "Answer:"
+        )
+
+        target = answer_key  # e.g. "A"
+        out.append(
+            {
+                "source": source,
+                "target": target,
+                "task": "math",
+            }
+        )
+
+        if len(out) >= max_examples:
+            break
+
+    return out
+
+
+def process_openbookqa(
+    max_examples: int = 10_000,
+    max_q_words: int = 128,
+) -> List[Dict]:
+    """
+    OpenBookQA main split.
+    Fields: 'question_stem', 'choices'['text','label'], 'answerKey'.
+    Again, we train to output just the correct letter.
+    """
+    try:
+        ds = load_dataset("openbookqa", "main", split="train")
+    except Exception as e:
+        print(f"⚠️ openbookqa not found – skipping. ({e})", file=sys.stderr)
+        return []
+
+    out: List[Dict] = []
+    for s in ds:
+        stem = clean_nl(s.get("question_stem", ""))
+        choices = s.get("choices", {}) or {}
+        texts = choices.get("text", []) or []
+        labels = choices.get("label", []) or []
+        answer_key = (s.get("answerKey", "") or "").strip()
+
+        if not stem or not texts or not labels or not answer_key:
+            continue
+
+        stem = truncate_words(stem, max_q_words)
+
+        option_lines = []
+        for lab, txt in zip(labels, texts):
+            option_lines.append(f"{lab}. {clean_nl(txt)}")
+        options_str = "\n".join(option_lines)
+
+        source = (
+            "[MATH]\n"
+            "You are a reasoning assistant. Answer the question using common-sense and science.\n\n"
+            f"Question: {stem}\n\n"
+            f"Options:\n{options_str}\n\n"
+            "Answer with the letter of the correct option.\n\n"
+            "Answer:"
+        )
+        target = answer_key
+
+        out.append(
+            {
+                "source": source,
+                "target": target,
+                "task": "math",   # stays in the math/reasoning bucket
+            }
+        )
+
+        if len(out) >= max_examples:
+            break
+
+    return out
+
+
+def process_svamp(
+    max_examples: int = 15_000,
+    max_q_words: int = 128,
+) -> List[Dict]:
+    """
+    SVAMP: math word problems.
+    Typical fields: 'Body', 'Question', 'Answer'.
+    We join Body + Question and train to output the numeric answer.
+    """
+    try:
+        ds = load_dataset("ChilleD/SVAMP", split="train")
+    except Exception:
+        # fallback to default id if alias changes
+        try:
+            ds = load_dataset("svamp", split="train")
+        except Exception as e:
+            print(f"⚠️ svamp not found – skipping. ({e})", file=sys.stderr)
+            return []
+
+    out: List[Dict] = []
+    for s in ds:
+        body = clean_nl(s.get("Body", "") or s.get("body", ""))
+        question = clean_nl(s.get("Question", "") or s.get("question", ""))
+        ans = clean_nl(str(s.get("Answer", "") or s.get("answer", "")))
+
+        if not question or not ans:
+            continue
+
+        full_q = (body + " " + question).strip()
+        full_q = truncate_words(full_q, max_q_words)
+
+        source = (
+            "[MATH]\n"
+            "Solve the following arithmetic word problem step by step. "
+            "End with 'Final answer: <number>'.\n\n"
+            f"{full_q}\n\nSolution:"
+        )
+        target = f"Final answer: {ans}"
+
+        out.append(
+            {
+                "source": source,
+                "target": target,
+                "task": "math",
+            }
+        )
+
+        if len(out) >= max_examples:
+            break
+
+    return out
+
+
+def process_boolq(
+    max_examples: int = 20_000,
+    max_passage_words: int = 160,
+    max_q_words: int = 64,
+) -> List[Dict]:
+    """
+    BoolQ: reading comprehension yes/no questions.
+    Fields: 'passage', 'question', 'answer' (bool).
+    We train the model to output 'yes' or 'no'.
+    """
+    try:
+        ds = load_dataset("boolq", split="train")
+    except Exception as e:
+        print(f"⚠️ boolq not found – skipping. ({e})", file=sys.stderr)
+        return []
+
+    out: List[Dict] = []
+    for s in ds:
+        passage = clean_nl(s.get("passage", ""))
+        question = clean_nl(s.get("question", ""))
+        ans_bool = s.get("answer", None)
+
+        if not passage or not question or ans_bool is None:
+            continue
+
+        passage = truncate_words(passage, max_passage_words)
+        question = truncate_words(question, max_q_words)
+
+        # bool -> "yes"/"no"
+        ans_str = "yes" if ans_bool else "no"
+
+        source = (
+            "[MATH]\n"
+            "Read the passage and answer the question with 'yes' or 'no'. "
+            "You may reason briefly, but finish with a single word answer.\n\n"
+            f"Passage: {passage}\n\n"
+            f"Question: {question}\n\n"
+            "Answer:"
+        )
+
+        target = ans_str
+
+        out.append(
+            {
+                "source": source,
+                "target": target,
+                "task": "math",  # we still treat this as reasoning/maths bucket
+            }
+        )
+
+        if len(out) >= max_examples:
+            break
+
+    return out
 
 
 # -----------------------------
@@ -968,12 +1193,48 @@ def save_combined_data(
         print(f"⚠️ Error processing math_qa: {e}", file=sys.stderr)
 
     # ---- Advanced math (Hendrycks) ----
+        # ---- Advanced math (Hendrycks) ----
     try:
         hendrycks_data = process_hendrycks_math(max_examples=min(20_000, max_math))
         parts.extend(hendrycks_data)
         print(f"Processed hendrycks_math: {len(hendrycks_data)} examples")
     except Exception as e:
         print(f"⚠️ Error processing hendrycks_math: {e}", file=sys.stderr)
+
+    # ---- ARC-style reasoning (ai2_arc) ----
+    try:
+        arc_data = process_arc_ai2(max_examples=min(20_000, max_math))
+        parts.extend(arc_data)
+        print(f"Processed ai2_arc: {len(arc_data)} examples")
+    except Exception as e:
+        print(f"⚠️ Error processing ai2_arc: {e}", file=sys.stderr)
+
+    # ---- OpenBookQA reasoning ----
+    try:
+        obqa_data = process_openbookqa(max_examples=min(10_000, max_math))
+        parts.extend(obqa_data)
+        print(f"Processed openbookqa: {len(obqa_data)} examples")
+    except Exception as e:
+        print(f"⚠️ Error processing openbookqa: {e}", file=sys.stderr)
+
+    # ---- SVAMP arithmetic word problems ----
+    try:
+        svamp_data = process_svamp(max_examples=min(15_000, max_math))
+        parts.extend(svamp_data)
+        print(f"Processed svamp: {len(svamp_data)} examples")
+    except Exception as e:
+        print(f"⚠️ Error processing svamp: {e}", file=sys.stderr)
+
+    # ---- BoolQ yes/no reasoning ----
+    try:
+        boolq_data = process_boolq(max_examples=min(20_000, max_math))
+        parts.extend(boolq_data)
+        print(f"Processed boolq: {len(boolq_data)} examples")
+    except Exception as e:
+        print(f"⚠️ Error processing boolq: {e}", file=sys.stderr)
+
+    
+
 
     # ---- Custom ----
     
@@ -1023,8 +1284,8 @@ if __name__ == "__main__":
 
     save_combined_data(
         output_file=out_path,
-        max_per_summarization=80_000,  # tune for GPU budget
+        max_per_summarization=60_000,  # tune for GPU budget
         max_cpp=150_000,
-        max_math=150_000,
+        max_math=230_000,
         custom_jsonl=custom_path,
     )
