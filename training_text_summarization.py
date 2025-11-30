@@ -1281,11 +1281,16 @@ def train_model(data_path, epochs=7, batch_size=64, emb_dim=50, train_from_scrat
 
         # -------- Optional warm-start from weights --------
         if not train_from_scratch:
-            model.load_weights(weights_path, by_name=True, skip_mismatch=True)
-            
+            try:
+                model.load_weights(weights_path)
+                print(f"Loaded weights from {weights_path}")
+            except Exception as e:
+                print("Direct load_weights failed, trying warm-start from .keras:", e)
+                warm_start_from_old_model(model, model_path)
         else:
             warm_start_from_old_model(model, model_path)
-            print("train_from_scratch=True → starting from random init.")
+            print("train_from_scratch=True → starting from random init (warm-start if possible).")
+   
 
 
         # -------- Optimizer: smaller LR + gradient clipping --------
