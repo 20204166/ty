@@ -930,13 +930,14 @@ def configure_trainable_for_phase(model, phase: str):
                 layer.trainable = False
                 
     elif phase == "global_only":
-        #  ONLY train the new hierarchical / global blocks
+        # only global encoder/decoder blocks trainable
         for layer in model.layers:
             name = layer.name
-            if name.startswith("global_") or name.startswith("hier_"):
+            if name.startswith("genc_") or name.startswith("gdec_"):
                 layer.trainable = True
-            else:
-                layer.trainable = False
+
+    else:
+        raise ValueError(f"Unknown phase: {phase}")
 
     else:
         print(f"⚠️ Unknown phase {phase!r}, defaulting to all trainable")
