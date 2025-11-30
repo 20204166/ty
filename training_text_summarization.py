@@ -1163,7 +1163,7 @@ def configure_trainable_for_phase(model, phase: str):
             "decoder_dense",
         ]
         for layer in model.layers:
-        layer.trainable = (layer.name in new_layer_names)
+            layer.trainable = (layer.name in new_layer_names)
 
     else:
         print(f"⚠️ Unknown phase {phase!r}, defaulting to all trainable")
