@@ -1287,9 +1287,8 @@ def train_model(data_path, epochs=7, batch_size=64, emb_dim=50, train_from_scrat
 
         # -------- Optional warm-start from weights --------
         if not train_from_scratch:
-            try:
-                model.load_weights(weights_path)
-                print(f"Loaded weights from {weights_path}")
+            model.load_weights(weights_path)
+            print(f"Loaded weights from {weights_path}")
         else:
             warm_start_from_old_model(model, model_path)
             print("train_from_scratch=True → starting from random init (warm-start if possible).")
