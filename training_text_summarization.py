@@ -333,24 +333,21 @@ def build_seq2seq_model(
     genc_ln1 = LayerNormalization(name="genc_ln1")(enc_outs)
 
     # Pool over time to get a global summary
-    genc_pool = tf.reduce_mean(
-        genc_ln1,
-        axis=1,
-        keepdims=False,
-        name="genc_pool_mean",     
-    )
-
+    genc_pool = Lambda(
+        lambda x: tf.reduce_mean(x, axis=1),
+        name="genc_pool_mean",
+    )(genc_ln1)
+  
     # Turn pooled vector into a "global query"
     genc_query = Dense(
         enc_units,
         activation="tanh",
         name="genc_query",
     )(genc_pool)                   # (B, enc_units)
-    genc_query = tf.expand_dims(
-        genc_query,
-        axis=1,
-        name="genc_query_expand",  # (B, 1, enc_units)
-    )
+    genc_query = Lambda(
+        lambda x: tf.expand_dims(x, axis=1),
+        name="genc_query_expand",
+    )(genc_query)  
 
     # Multi-head attention: global token attends over full encoder sequence
     genc_attn = MultiHeadAttention(
@@ -431,23 +428,20 @@ def build_seq2seq_model(
     gdec_ln1 = LayerNormalization(name="gdec_ln1")(dec_context)
 
     # Pool over time (global token)
-    gdec_pool = tf.reduce_mean(
-        gdec_ln1,
-        axis=1,
-        keepdims=False,
-        name="gdec_pool_mean",      # (B, dec_units)
-    )
+    gdec_pool = Lambda(
+        lambda x: tf.reduce_mean(x, axis=1),
+        name="gdec_pool_mean",
+    )(gdec_ln1)
 
     gdec_query = Dense(
         dec_units,
         activation="tanh",
         name="gdec_query",
     )(gdec_pool)                    # (B, dec_units)
-    gdec_query = tf.expand_dims(
-        gdec_query,
-        axis=1,
-        name="gdec_query_expand",   # (B, 1, dec_units)
-    )
+    gdec_query = Lambda(
+        lambda x: tf.expand_dims(x, axis=1),
+        name="gdec_query_expand",
+    )(gdec_query)
 
     gdec_attn = MultiHeadAttention(
         num_heads=4,
