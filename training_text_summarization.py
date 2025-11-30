@@ -24,6 +24,7 @@ from tensorflow.keras.layers import (
     Add,
     MultiHeadAttention,
     Lambda,
+    Multiply, 
 )
 
 from tensorflow.keras.models import Model
@@ -46,8 +47,8 @@ max_length_target = 128
 # Desired task ratios for multi-task training (only used if the data has "task")
 TASK_RATIOS = {
     "summarization": 0.4,
-    "code_cpp": 0.35,
-    "math": 0.3,
+    "code_cpp": 0.4,
+    "math": 0.2,
 }
 # Optional cap on total number of examples after rebalancing
 TASK_MAX_TOTAL = None  # e.g. 500_000 or None for "whatever the data allows"
@@ -327,8 +328,10 @@ def build_seq2seq_model(
     enc_ffn = Dense(enc_units, name="enc_ffn2")(enc_ffn)
     enc_outs = Add(name="enc_ffn_res")([enc_outs, enc_ffn])
 
+    enc_local = enc_outs
+
     # ===== GLOBAL ENCODER BLOCK (hierarchical on encoder side) =====
-    # enc_outs: (B, T_enc, enc_units)
+    
 
     genc_ln1 = LayerNormalization(name="genc_ln1")(enc_outs)
 
@@ -402,13 +405,18 @@ def build_seq2seq_model(
     # Cross-attention: decoder → encoder
     cross_attn = Attention(name="cross_attn")([dec_out2, enc_outs])
 
+    cross_attn_local = Attention(name="cross_attn_local")([dec_out2, enc_local])
+
+
     # Self-attention on the decoder outputs: decoder → decoder
     self_attn = Attention(name="self_attn")([dec_out2, dec_out2])
     
     # but KEEP the last dim = dec_units (no shape change)
-    fused = tf.keras.layers.Add(name="decoder_fused")(
-        [dec_out2, cross_attn, self_attn]
+    fused = Add(name="decoder_fused")(
+        [dec_out2, cross_attn, cross_attn_local, self_attn]
     )
+
+
 
     dec_norm = LayerNormalization(name="dec_ln")(fused)
 
@@ -421,6 +429,13 @@ def build_seq2seq_model(
 
     # 2nd LayerNorm on the residual output
     dec_context = LayerNormalization(name="dec_ln2")(dec_context_res)
+
+    # STREAM 2: shallow decoder-only linear stream (extra linear reasoning path)
+    dec_linear = Dense(
+        dec_units,
+        activation="tanh",
+        name="dec_linear_stream",
+    )(dec_context)
 
     # ===== GLOBAL DECODER BLOCK (hierarchical on decoder side) =====
     
@@ -465,8 +480,22 @@ def build_seq2seq_model(
 
     dec_context = Add(name="gdec_ffn_res")([gdec_ln2, gdec_ffn2])
     # dec_context now = GLOBAL + local, same shape as before
+    
+    #NEW STREAM 3: dual-side synapse path (encoder <-> decoder)
+    # Project encoder + decoder into a shared space and let them attend to each other.
+    syn_enc = Dense(
+        dec_units,
+        activation="tanh",
+        name="syn_enc_proj",
+    )(enc_outs)
+    syn_dec = Dense(
+        dec_units,
+        activation="tanh",
+        name="syn_dec_proj",
+    )(dec_context)  # (B, T_dec, dec_units)
 
-
+    syn_attn = Attention(name="syn_cross_attn")([syn_dec, syn_enc])  
+    
     # ===== REFINE BLOCK (also 2× LayerNorm) =====
 
     # LN before refine self-attention
@@ -498,10 +527,28 @@ def build_seq2seq_model(
         dec_units,
         name="refine_ffn2",
     )(refine_ffn)
+    
+    # 2 small "synapse" gates that modulate the two extra streams
+    syn_gate1 = Dense(
+        dec_units,
+        activation="sigmoid",
+        name="syn_gate1",
+    )(dec_linear)
+
+    syn_gate2 = Dense(
+        dec_units,
+        activation="sigmoid",
+        name="syn_gate2",
+    )(syn_attn)
+
+    gated_syn1 = Multiply(name="syn_gated1")([dec_linear, syn_gate1])
+    gated_syn2 = Multiply(name="syn_gated2")([syn_attn, syn_gate2])
 
     # Residual again
-    dec_final = Add(name="refine_ffn_res")([refine_attn_res, refine_ffn])
-
+    dec_final = Add(name="refine_ffn_res")(
+        [refine_attn_res, refine_ffn, gated_syn1, gated_syn2]
+    )
+    
     # Final logits from refined decoder representation
     outputs = Dense(
         vocab_tgt,
@@ -1059,6 +1106,33 @@ def configure_trainable_for_phase(model, phase: str):
             name = layer.name
             if name.startswith("genc_") or name.startswith("gdec_"):
                 layer.trainable = True
+                
+    elif phase == "syn_linear_only":
+        for layer in model.layers:
+            name = layer.name
+            if name in ["dec_linear_stream", "syn_gate1", "syn_gated1"]:
+                layer.trainable = True
+            else:
+                layer.trainable = False
+                
+    elif phase == "syn_cross_only":
+        for layer in model.layers:
+            name = layer.name
+            if name in [
+                "syn_enc_proj", "syn_dec_proj", "syn_cross_attn",
+                "syn_gate2", "syn_gated2"
+            ]:
+                layer.trainable = True
+            else:
+                layer.trainable = False
+
+    elif phase == "decoder_plus_syn":
+        for layer in model.layers:
+            ame = layer.name
+            if name.startswith("enc_"):
+                layer.trainable = False
+            else:
+                layer.trainable = True
 
     else:
         print(f"⚠️ Unknown phase {phase!r}, defaulting to all trainable")
@@ -1112,7 +1186,7 @@ def warm_start_from_old_model(model, old_model_path):
 
     print(f"✅ Warm-start finished: copied weights for {copied} layers, skipped {skipped}.")
 
-def train_model(data_path, epochs=10, batch_size=64, emb_dim=50, train_from_scratch=False, phase="all"):
+def train_model(data_path, epochs=7, batch_size=64, emb_dim=50, train_from_scratch=False, phase="syn_cross_only"):
     inputs, targets = load_training_data(data_path)
     split = int(0.9 * len(inputs))
     save_dir = "app/models/saved_model"
@@ -1153,7 +1227,7 @@ def train_model(data_path, epochs=10, batch_size=64, emb_dim=50, train_from_scra
     num_train = len(train_enc)
 
     #  cap steps/epoch so Kaggle doesn't take 3h
-    MAX_STEPS_PER_EPOCH = 3000  # you can drop to 1000 if still too slow
+    MAX_STEPS_PER_EPOCH = 2000  # you can drop to 1000 if still too slow
     steps_per_epoch = min(
         MAX_STEPS_PER_EPOCH,
         max(1, num_train // batch_size),
@@ -1207,7 +1281,7 @@ def train_model(data_path, epochs=10, batch_size=64, emb_dim=50, train_from_scra
 
         # -------- Optional warm-start from weights --------
         if not train_from_scratch:
-            model.load_weights(weights_path)
+            model.load_weights(weights_path, by_name=True, skip_mismatch=True)
             
         else:
             warm_start_from_old_model(model, model_path)
