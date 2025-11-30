@@ -1119,8 +1119,14 @@ def configure_trainable_for_phase(model, phase: str):
         for layer in model.layers:
             name = layer.name
             if name in [
-                "syn_enc_proj", "syn_dec_proj", "syn_cross_attn",
-                "syn_gate2", "syn_gated2"
+                "syn_enc_proj", 
+                "syn_dec_proj", 
+                "syn_cross_attn",
+                "syn_gate2", 
+                "syn_gated2",    
+                "decoder_dense",      # VERY important
+                "refine_ffn1",        # optional but recommended (shape changed)
+                "refine_ffn2", 
             ]:
                 layer.trainable = True
             else:
@@ -1284,9 +1290,6 @@ def train_model(data_path, epochs=7, batch_size=64, emb_dim=50, train_from_scrat
             try:
                 model.load_weights(weights_path)
                 print(f"Loaded weights from {weights_path}")
-            except Exception as e:
-                print("Direct load_weights failed, trying warm-start from .keras:", e)
-                warm_start_from_old_model(model, model_path)
         else:
             warm_start_from_old_model(model, model_path)
             print("train_from_scratch=True → starting from random init (warm-start if possible).")
