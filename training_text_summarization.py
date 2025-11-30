@@ -937,9 +937,6 @@ def configure_trainable_for_phase(model, phase: str):
                 layer.trainable = True
 
     else:
-        raise ValueError(f"Unknown phase: {phase}")
-
-    else:
         print(f"⚠️ Unknown phase {phase!r}, defaulting to all trainable")
         for layer in model.layers:
             layer.trainable = True
