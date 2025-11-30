@@ -57,6 +57,195 @@ def truncate_summary_complete(text: str, max_words: int) -> str:
 # Helpers to build instruction tasks
 # -----------------------------------
 
+def process_natural_questions_clean(
+    max_examples: int = 50_000,
+    max_ctx_words: int = 512,
+    max_q_words: int = 64,
+    max_ans_words: int = 64,
+) -> List[Dict]:
+    """
+    Natural Questions (clean version):
+      dataset: 'lighteval/natural_questions_clean'
+      fields (per card): 'context', 'question', 'answer'.
+
+    We turn it into:
+      input: passage + question
+      target: short answer (1–2 sentences).
+    """
+    try:
+        ds = load_dataset("lighteval/natural_questions_clean", split="train")
+    except Exception as e:
+        print(f"⚠️ Natural Questions (clean) not found – skipping. ({e})", file=sys.stderr)
+        return []
+
+    out: List[Dict] = []
+    for s in ds:
+        context = clean_nl(s.get("context", "") or s.get("ctx", ""))
+        question = clean_nl(s.get("question", ""))
+        answer = clean_nl(s.get("answer", ""))
+
+        if not context or not question or not answer:
+            continue
+
+        context = truncate_words(context, max_ctx_words)
+        question = truncate_words(question, max_q_words)
+        answer = truncate_summary_complete(answer, max_ans_words)
+
+        source = (
+            "[READING_COMPREHENSION]\n"
+            "Read the passage and answer the question in a short, direct sentence.\n\n"
+            f"Passage: {context}\n\n"
+            f"Question: {question}\n\n"
+            "Answer:"
+        )
+
+        out.append(
+            {
+                "source": source,
+                "target": answer,
+                # treat as summarisation-like
+                "task": "summarization",
+            }
+        )
+
+        if len(out) >= max_examples:
+            break
+
+    return out
+def process_hotpot_qa(
+    max_examples: int = 50_000,
+    max_ctx_words: int = 512,
+    max_q_words: int = 64,
+    max_ans_words: int = 64,
+) -> List[Dict]:
+    """
+    HotpotQA multi-hop QA:
+      dataset: 'hotpotqa/hotpot_qa', config 'distractor'
+      key fields: 'question', 'answer', 'context'
+
+    'context' is a list of [title, sentences] pairs.
+    We join all documents into one long context, then ask for a short answer.
+    """
+    try:
+        ds = load_dataset("hotpotqa/hotpot_qa", "distractor", split="train")
+    except Exception as e:
+        print(f"⚠️ HotpotQA not found – skipping. ({e})", file=sys.stderr)
+        return []
+
+    out: List[Dict] = []
+    for s in ds:
+        question = clean_nl(s.get("question", ""))
+        answer = clean_nl(s.get("answer", ""))
+
+        ctx_list = s.get("context", [])
+        passages = []
+        for item in ctx_list:
+            # context entries are usually [title, [sent1, sent2, ...]]
+            if not isinstance(item, (list, tuple)) or len(item) != 2:
+                continue
+            title, sentences = item
+            title = clean_nl(title)
+            text = clean_nl(" ".join(sentences)) if isinstance(sentences, (list, tuple)) else clean_nl(sentences)
+            if not text:
+                continue
+            if title:
+                passages.append(f"{title}: {text}")
+            else:
+                passages.append(text)
+
+        if not question or not answer or not passages:
+            continue
+
+        context = truncate_words(" ".join(passages), max_ctx_words)
+        question = truncate_words(question, max_q_words)
+        answer = truncate_summary_complete(answer, max_ans_words)
+
+        source = (
+            "[MULTIHOP_QA]\n"
+            "Read the documents and answer the question using information from the text. "
+            "Give a short, direct answer (one or two sentences).\n\n"
+            f"Documents:\n{context}\n\n"
+            f"Question: {question}\n\n"
+            "Answer:"
+        )
+
+        out.append(
+            {
+                "source": source,
+                "target": answer,
+                # still counted as summarisation-like
+                "task": "summarization",
+            }
+        )
+
+        if len(out) >= max_examples:
+            break
+
+    return out
+
+def process_squad(
+    max_examples: int = 50_000,
+    max_ctx_words: int = 400,
+    max_q_words: int = 64,
+    max_ans_words: int = 64,
+) -> List[Dict]:
+    """
+    SQuAD-style reading comprehension:
+      dataset: 'squad'
+      fields: 'context', 'question', 'answers'['text']
+
+    We turn it into an instruction:
+      - input: passage + question
+      - target: short answer text (1-2 sentences)
+    This is not "summarisation" strictly, but very similar behaviour.
+    """
+    try:
+        ds = load_dataset("squad", split="train")
+    except Exception as e:
+        print(f"⚠️ SQuAD not found – skipping. ({e})", file=sys.stderr)
+        return []
+
+    out: List[Dict] = []
+    for s in ds:
+        context = clean_nl(s.get("context", ""))
+        question = clean_nl(s.get("question", ""))
+        answers = s.get("answers", {}) or {}
+        texts = answers.get("text", []) or []
+
+        if not context or not question or not texts:
+            continue
+
+        # use the first annotated answer
+        answer = clean_nl(texts[0])
+        if not answer:
+            continue
+
+        context = truncate_words(context, max_ctx_words)
+        question = truncate_words(question, max_q_words)
+        answer = truncate_summary_complete(answer, max_ans_words)
+
+        source = (
+            "[READING_COMPREHENSION]\n"
+            "Read the passage and answer the question in one or two sentences.\n\n"
+            f"Passage: {context}\n\n"
+            f"Question: {question}\n\n"
+            "Answer:"
+        )
+
+        out.append(
+            {
+                "source": source,
+                "target": answer,
+                # 📌 treat as 'summarization-like' for task sampling
+                "task": "summarization",
+            }
+        )
+
+        if len(out) >= max_examples:
+            break
+
+    return out
+
 
 def make_summarization_example(
     document: str,
@@ -1119,7 +1308,38 @@ def save_combined_data(
         print(f"Processed BillSum: {len(billsum_data)} examples")
     except Exception as e:
         print(f"⚠️ Error processing BillSum: {e}", file=sys.stderr)
+    
+    # NEW: SQuAD-style RC
+    try:
+        squad_data = process_squad(max_examples=max_per_summarization)
+        parts.extend(squad_data)
+        print(f"Processed SQuAD: {len(squad_data)} examples")
+    except Exception as e:
+        print(f"⚠️ Error processing SQuAD: {e}", file=sys.stderr)
 
+    # NEW: Natural Questions (clean, long-passages)
+    try:
+        nq_data = process_natural_questions_clean(max_examples=max_per_summarization)
+        parts.extend(nq_data)
+        print(f"Processed Natural Questions (clean): {len(nq_data)} examples")
+    except Exception as e:
+        print(f"⚠️ Error processing Natural Questions (clean): {e}", file=sys.stderr)
+
+    # NEW: HotpotQA multi-hop
+    try:
+        hotpot_data = process_hotpot_qa(max_examples=max_per_summarization)
+        parts.extend(hotpot_data)
+        print(f"Processed HotpotQA: {len(hotpot_data)} examples")
+    except Exception as e:
+        print(f"⚠️ Error processing HotpotQA: {e}", file=sys.stderr)
+
+    try:
+        squad_data = process_squad(max_examples=max_per_summarization)
+        parts.extend(squad_data)
+        print(f"Processed SQuAD: {len(squad_data)} examples")
+    except Exception as e:
+        print(f"⚠️ Error processing SQuAD: {e}", file=sys.stderr)
+        
     # ---- C++ code ----
     try:
         cpp_data = process_cpp_vault(max_examples=max_cpp)
