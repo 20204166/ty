@@ -38,6 +38,9 @@ from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.optimizers.schedules import ExponentialDecay
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 from tensorflow.keras.preprocessing.text import Tokenizer
+from tensorflow.keras import mixed_precision
+
+mixed_precision.set_global_policy("mixed_float16")
 
 USE_MULTI_GPU = False # set False for 1 GPU, True for both
 
@@ -1422,7 +1425,7 @@ def warm_start_from_old_model(model, old_model_path):
 
     print(f"✅ Warm-start finished: copied weights for {copied} layers, skipped {skipped}.")
 
-def train_model(data_path, epochs=15, batch_size=128, emb_dim=50, train_from_scratch=False, phase="enc_tf_plus_head_synapses"):
+def train_model(data_path, epochs=15, batch_size=64, emb_dim=50, train_from_scratch=False, phase="enc_tf_plus_head_synapses"):
     inputs, targets = load_training_data(data_path)
     split = int(0.9 * len(inputs))
     save_dir = "app/models/saved_model"
