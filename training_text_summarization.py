@@ -1,5 +1,11 @@
-import json
 import os
+
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"          # disable MKL/oneDNN fused ops
+os.environ["TF_XLA_FLAGS"] = "--tf_xla_auto_jit=0"
+os.environ["TF_XLA_ENABLE_XLA_DEVICES"] = "false"
+os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+
+import json
 import subprocess
 import random
 
@@ -33,10 +39,6 @@ from tensorflow.keras.optimizers.schedules import ExponentialDecay
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 from tensorflow.keras.preprocessing.text import Tokenizer
 
-os.environ["TF_XLA_FLAGS"] = "--tf_xla_auto_jit=0"
-os.environ["TF_XLA_ENABLE_XLA_DEVICES"] = "false"
-
-os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 USE_MULTI_GPU = False # set False for 1 GPU, True for both
 
 
@@ -1277,7 +1279,7 @@ def configure_trainable_for_phase(model, phase: str):
         trainable_names = [
             "genc_mha", "genc_ffn1", "genc_ffn2",
             "gdec_mha", "gdec_ffn1", "gdec_ffn2",
-            "refine_self_attn"
+            "refine_self_attn",
             
             # new encoder TF
             "enc_tf_proj", "enc_tf_ln1", "enc_tf_mha",
