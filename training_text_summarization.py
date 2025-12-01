@@ -1275,6 +1275,10 @@ def configure_trainable_for_phase(model, phase: str):
                 
     elif phase == "enc_tf_plus_head_synapses":
         trainable_names = [
+            "genc_mha", "genc_ffn1", "genc_ffn2",
+            "gdec_mha", "gdec_ffn1", "gdec_ffn2",
+            "refine_self_attn"
+            
             # new encoder TF
             "enc_tf_proj", "enc_tf_ln1", "enc_tf_mha",
             "enc_tf_res1", "enc_tf_ln2",
@@ -1282,7 +1286,7 @@ def configure_trainable_for_phase(model, phase: str):
             "enc_tf_res2", "enc_tf_backproj", "enc_tf_out_res",
             
             # your existing decision bits
-            "dec_linear_stream",
+            "dec_linear_stream", "dec_linear_enh",
             "lin_tf_proj", "lin_tf_ln1", "lin_tf_mha",
             "lin_tf_res1", "lin_tf_ln2", "lin_tf_ffn1",
             "lin_tf_ffn2", "lin_tf_res2", "lin_tf_backproj", "lin_tf_out_res",
@@ -1457,7 +1461,7 @@ def train_model(data_path, epochs=15, batch_size=64, emb_dim=50, train_from_scra
     num_train = len(train_enc)
 
     #  cap steps/epoch so Kaggle doesn't take 3h
-    MAX_STEPS_PER_EPOCH = 5000  # you can drop to 1000 if still too slow
+    MAX_STEPS_PER_EPOCH = 3000  # you can drop to 1000 if still too slow
     steps_per_epoch = min(
         MAX_STEPS_PER_EPOCH,
         max(1, num_train // batch_size),
