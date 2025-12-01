@@ -46,9 +46,9 @@ max_length_input = 256
 max_length_target = 128
 # Desired task ratios for multi-task training (only used if the data has "task")
 TASK_RATIOS = {
-    "summarization": 0.4,
-    "code_cpp": 0.4,
-    "math": 0.2,
+    "summarization": 0.5,
+    "code_cpp": 0.1,
+    "math": 0.4,
 }
 # Optional cap on total number of examples after rebalancing
 TASK_MAX_TOTAL = None  # e.g. 500_000 or None for "whatever the data allows"
@@ -1217,7 +1217,7 @@ def warm_start_from_old_model(model, old_model_path):
 
     print(f"✅ Warm-start finished: copied weights for {copied} layers, skipped {skipped}.")
 
-def train_model(data_path, epochs=10, batch_size=64, emb_dim=50, train_from_scratch=False, phase="syn_cross_only"):
+def train_model(data_path, epochs=8, batch_size=64, emb_dim=50, train_from_scratch=False, phase="syn_linear_only"):
     inputs, targets = load_training_data(data_path)
     split = int(0.9 * len(inputs))
     save_dir = "app/models/saved_model"
