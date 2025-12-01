@@ -46,9 +46,9 @@ max_length_input = 256
 max_length_target = 128
 # Desired task ratios for multi-task training (only used if the data has "task")
 TASK_RATIOS = {
-    "summarization": 0.35,
-    "code_cpp": 0.35,
-    "math": 0.3,
+    "summarization": 0.3,
+    "code_cpp": 0.3,
+    "math": 0.4,
 }
 # Optional cap on total number of examples after rebalancing
 TASK_MAX_TOTAL = None  # e.g. 500_000 or None for "whatever the data allows"
@@ -378,6 +378,36 @@ def build_seq2seq_model(
     enc_outs = Add(name="genc_ffn_res")([genc_ln2, genc_ffn2])
     # enc_outs stays shape (B, T_enc, enc_units) but is now globally enriched
 
+    enc_tf_proj = Dense(
+        512,
+        activation="relu",
+        name="enc_tf_proj",
+    )(enc_outs) 
+
+    enc_tf_ln1 = LayerNormalization(name="enc_tf_ln1")(enc_tf_proj)
+
+    enc_tf_mha = MultiHeadAttention(
+        num_heads=8,
+        key_dim=64,
+        name="enc_tf_mha",
+    )(enc_tf_ln1, enc_tf_ln1)      # (B, T_enc, 512)
+
+    enc_tf_res1 = Add(name="enc_tf_res1")([enc_tf_proj, enc_tf_mha])
+
+    enc_tf_ln2 = LayerNormalization(name="enc_tf_ln2")(enc_tf_res1)
+    enc_tf_ffn1 = Dense(2048, activation="relu", name="enc_tf_ffn1")(enc_tf_ln2)
+    enc_tf_ffn2 = Dense(512, name="enc_tf_ffn2")(enc_tf_ffn1)
+    enc_tf_res2 = Add(name="enc_tf_res2")([enc_tf_res1, enc_tf_ffn2])
+
+    enc_tf_back = Dense(
+        enc_units,
+        name="enc_tf_backproj",
+    )(enc_tf_res2)                 
+
+    # Final encoder representation: LSTM + global + transformer
+    enc_outs = Add(name="enc_tf_out_res")([enc_outs, enc_tf_back])
+    
+
 
     # Decoder: 2-layer LSTM
     dec_inputs = Input(shape=(max_tgt,), name="dec_inputs")
@@ -437,6 +467,30 @@ def build_seq2seq_model(
         name="dec_linear_stream",
     )(dec_context)
 
+    lin_tf_proj = Dense(
+        256,
+        activation="relu",
+        name="lin_tf_proj",
+    )(dec_linear)   # (B, T_dec, 256)
+
+    lin_tf_ln1 = LayerNormalization(name="lin_tf_ln1")(lin_tf_proj)
+
+    lin_tf_mha = MultiHeadAttention(
+        num_heads=4,
+        key_dim=64,
+        name="lin_tf_mha",
+    )(lin_tf_ln1, lin_tf_ln1)  # (B, T_dec, 256)
+
+    lin_tf_res1 = Add(name="lin_tf_res1")([lin_tf_proj, lin_tf_mha])
+
+    lin_tf_ln2 = LayerNormalization(name="lin_tf_ln2")(lin_tf_res1)
+    lin_tf_ffn1 = Dense(1024, activation="relu", name="lin_tf_ffn1")(lin_tf_ln2)
+    lin_tf_ffn2 = Dense(256, name="lin_tf_ffn2")(lin_tf_ffn1)
+    lin_tf_res2 = Add(name="lin_tf_res2")([lin_tf_res1, lin_tf_ffn2])
+
+    lin_tf_back = Dense(dec_units, name="lin_tf_backproj")(lin_tf_res2)
+    dec_linear_enh = Add(name="lin_tf_out_res")([dec_linear, lin_tf_back])
+
     # ===== GLOBAL DECODER BLOCK (hierarchical on decoder side) =====
     
 
@@ -480,6 +534,59 @@ def build_seq2seq_model(
 
     dec_context = Add(name="gdec_ffn_res")([gdec_ln2, gdec_ffn2])
     # dec_context now = GLOBAL + local, same shape as before
+
+    
+    ### === TRANSFORMER BLOCK 1 (TF1, 512-dim) AFTER GLOBAL DECODER ===
+    # Use encoder summary + decoder context together
+
+    tf1_enc_pool = Lambda(
+        lambda x: tf.reduce_mean(x, axis=1),
+        name="tf1_enc_pool",
+    )(enc_outs)  # (B, 128)
+
+    tf1_enc_proj = Dense(
+        dec_units,
+        activation="tanh",
+        name="tf1_enc_proj",
+    )(tf1_enc_pool)  # (B, 128)
+
+    tf1_enc_expand = Lambda(
+        lambda x: tf.expand_dims(x, axis=1),
+        name="tf1_enc_expand",
+    )(tf1_enc_proj)  # (B, 1, 128)
+
+    tf1_enc_broadcast = Lambda(
+        lambda pair: tf.tile(pair[0], [1, tf.shape(pair[1])[1], 1]),
+        name="tf1_enc_broadcast",
+    )([tf1_enc_expand, dec_context])  # (B, T_dec, 128)
+
+    tf1_in = Concatenate(name="tf1_in_concat")(
+        [dec_context, tf1_enc_broadcast]
+    )  # (B, T_dec, 256)
+
+    tf1_proj = Dense(
+        512,
+        activation="relu",
+        name="tf1_proj",
+    )(tf1_in)  # (B, T_dec, 512)
+
+    tf1_ln1 = LayerNormalization(name="tf1_ln1")(tf1_proj)
+
+    tf1_mha = MultiHeadAttention(
+        num_heads=8,
+        key_dim=64,
+        name="tf1_mha",
+    )(tf1_ln1, tf1_ln1)  # (B, T_dec, 512)
+
+    tf1_res1 = Add(name="tf1_res1")([tf1_proj, tf1_mha])
+
+    tf1_ln2 = LayerNormalization(name="tf1_ln2")(tf1_res1)
+    tf1_ffn1 = Dense(2048, activation="relu", name="tf1_ffn1")(tf1_ln2)
+    tf1_ffn2 = Dense(512, name="tf1_ffn2")(tf1_ffn1)
+    tf1_res2 = Add(name="tf1_res2")([tf1_res1, tf1_ffn2])
+
+    tf1_back = Dense(dec_units, name="tf1_backproj")(tf1_res2)
+    dec_context = Add(name="tf1_out_res")([dec_context, tf1_back])
     
     #NEW STREAM 3: dual-side synapse path (encoder <-> decoder)
     # Project encoder + decoder into a shared space and let them attend to each other.
@@ -529,25 +636,66 @@ def build_seq2seq_model(
     )(refine_ffn)
     
     # 2 small "synapse" gates that modulate the two extra streams
+   # gate sees the *enriched* linear stream
     syn_gate1 = Dense(
         dec_units,
         activation="sigmoid",
         name="syn_gate1",
-    )(dec_linear)
+    )(dec_linear_enh)   # (B, T, 128)
+
+    # 1 - gate (how much to keep of the raw linear stream)
+    syn_gate1_inv = Lambda(
+        lambda g: 1.0 - g,
+        name="syn_gate1_inv",
+    )(syn_gate1)
+
+    # raw part: dec_linear * (1 - gate)
+    syn_part_raw = Multiply(name="syn_part_raw")([dec_linear, syn_gate1_inv])
+
+    # enriched part: dec_linear_enh * gate
+    syn_part_enh = Multiply(name="syn_part_enh")([dec_linear_enh, syn_gate1])
+
+    # mixed: per-token mix of raw vs enriched
+    gated_syn1 = Add(name="syn_gated1")([syn_part_raw, syn_part_enh])
 
     syn_gate2 = Dense(
         dec_units,
         activation="sigmoid",
         name="syn_gate2",
     )(syn_attn)
-
-    gated_syn1 = Multiply(name="syn_gated1")([dec_linear, syn_gate1])
+    
     gated_syn2 = Multiply(name="syn_gated2")([syn_attn, syn_gate2])
 
     # Residual again
     dec_final = Add(name="refine_ffn_res")(
         [refine_attn_res, refine_ffn, gated_syn1, gated_syn2]
     )
+
+    ### === TRANSFORMER BLOCK 2 (TF2, 512-dim) BEFORE LOGITS ===
+    
+    tf2_proj = Dense(
+        512,
+        activation="relu",
+        name="tf2_proj",
+    )(dec_final)  # (B, T_dec, 512)
+
+    tf2_ln1 = LayerNormalization(name="tf2_ln1")(tf2_proj)
+
+    tf2_mha = MultiHeadAttention(
+        num_heads=8,
+        key_dim=64,
+        name="tf2_mha",
+    )(tf2_ln1, tf2_ln1)  # (B, T_dec, 512)
+
+    tf2_res1 = Add(name="tf2_res1")([tf2_proj, tf2_mha])
+
+    tf2_ln2 = LayerNormalization(name="tf2_ln2")(tf2_res1)
+    tf2_ffn1 = Dense(2048, activation="relu", name="tf2_ffn1")(tf2_ln2)
+    tf2_ffn2 = Dense(512, name="tf2_ffn2")(tf2_ffn1)
+    tf2_res2 = Add(name="tf2_res2")([tf2_res1, tf2_ffn2])
+
+    tf2_back = Dense(dec_units, name="tf2_backproj")(tf2_res2)
+    dec_final = Add(name="tf2_out_res")([dec_final, tf2_back])
     
     # Final logits from refined decoder representation
     outputs = Dense(
@@ -1125,6 +1273,37 @@ def configure_trainable_for_phase(model, phase: str):
             else:
                 layer.trainable = False
                 
+    elif phase == "enc_tf_plus_head_synapses":
+        trainable_names = [
+            # new encoder TF
+            "enc_tf_proj", "enc_tf_ln1", "enc_tf_mha",
+            "enc_tf_res1", "enc_tf_ln2",
+            "enc_tf_ffn1", "enc_tf_ffn2",
+            "enc_tf_res2", "enc_tf_backproj", "enc_tf_out_res",
+            
+            # your existing decision bits
+            "dec_linear_stream",
+            "lin_tf_proj", "lin_tf_ln1", "lin_tf_mha",
+            "lin_tf_res1", "lin_tf_ln2", "lin_tf_ffn1",
+            "lin_tf_ffn2", "lin_tf_res2", "lin_tf_backproj", "lin_tf_out_res",
+            
+            "syn_enc_proj", "syn_dec_proj", "syn_cross_attn",
+            "syn_gate1", "syn_gate2",
+            "refine_ffn1", "refine_ffn2",
+            
+            "tf1_proj", "tf1_ln1", "tf1_mha",
+            "tf1_res1", "tf1_ln2", "tf1_ffn1", "tf1_ffn2",
+            "tf1_res2", "tf1_backproj", "tf1_out_res",
+            
+            "tf2_proj", "tf2_ln1", "tf2_mha",
+            "tf2_res1", "tf2_ln2", "tf2_ffn1", "tf2_ffn2",
+            "tf2_res2", "tf2_backproj", "tf2_out_res",
+            
+            "decoder_dense",
+        ]
+        for layer in model.layers:
+            layer.trainable = (layer.name in trainable_names)
+
     elif phase == "syn_cross_only":
         for layer in model.layers:
             name = layer.name
@@ -1141,6 +1320,16 @@ def configure_trainable_for_phase(model, phase: str):
                 layer.trainable = True
             else:
                 layer.trainable = False
+
+    elif phase == "enc_tf_only":
+        trainable_names = [
+            "enc_tf_proj", "enc_tf_ln1", "enc_tf_mha",
+            "enc_tf_res1", "enc_tf_ln2",
+            "enc_tf_ffn1", "enc_tf_ffn2",
+            "enc_tf_res2", "enc_tf_backproj", "enc_tf_out_res",
+        ]
+        for layer in model.layers:
+            layer.trainable = (layer.name in trainable_names)
 
     elif phase == "decoder_plus_syn":
         for layer in model.layers:
@@ -1227,7 +1416,7 @@ def warm_start_from_old_model(model, old_model_path):
 
     print(f"✅ Warm-start finished: copied weights for {copied} layers, skipped {skipped}.")
 
-def train_model(data_path, epochs=5, batch_size=64, emb_dim=50, train_from_scratch=False, phase="all"):
+def train_model(data_path, epochs=15, batch_size=64, emb_dim=50, train_from_scratch=False, phase="enc_tf_plus_head_synapses"):
     inputs, targets = load_training_data(data_path)
     split = int(0.9 * len(inputs))
     save_dir = "app/models/saved_model"
@@ -1337,7 +1526,7 @@ def train_model(data_path, epochs=5, batch_size=64, emb_dim=50, train_from_scrat
         configure_trainable_for_phase(model, phase)
 
         base_opt = Adam(
-            learning_rate=5e-6,
+            learning_rate=1e-5,
             global_clipnorm=1.0,  # gradient clipping
         )
         opt = base_opt
