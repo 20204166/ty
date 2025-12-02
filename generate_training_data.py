@@ -64,25 +64,66 @@ def process_natural_questions_clean(
     max_ans_words: int = 64,
 ) -> List[Dict]:
     """
-    Natural Questions (clean version):
-      dataset: 'lighteval/natural_questions_clean'
-      fields (per card): 'context', 'question', 'answer'.
-
-    We turn it into:
-      input: passage + question
-      target: short answer (1–2 sentences).
+    Natural Questions (clean version).
+    Works with variants where the fields are like:
+      - document/context (passage)
+      - question/query
+      - answer (string, list or dict)
     """
     try:
+        # your original ID – this is what succeeded, just our field mapping was wrong
         ds = load_dataset("lighteval/natural_questions_clean", split="train")
-    except Exception as e:
-        print(f"⚠️ Natural Questions (clean) not found – skipping. ({e})", file=sys.stderr)
-        return []
+    except Exception:
+        # fall back to another common variant if the above ever fails
+        try:
+            ds = load_dataset("rojagtap/natural_questions_clean", split="train")
+        except Exception as e:
+            print(f"⚠️ Natural Questions (clean) not found – skipping. ({e})", file=sys.stderr)
+            return []
 
     out: List[Dict] = []
+
     for s in ds:
-        context = clean_nl(s.get("context", "") or s.get("ctx", ""))
-        question = clean_nl(s.get("question", ""))
-        answer = clean_nl(s.get("answer", ""))
+        # context / passage
+        context = (
+            s.get("context")
+            or s.get("document")
+            or s.get("passage")
+            or s.get("ctx")
+            or ""
+        )
+
+        # question
+        question = s.get("question") or s.get("query") or ""
+
+        # answer can be str / list / dict depending on version
+        answer = s.get("answer", "")
+
+        if isinstance(answer, dict):
+            answer = (
+                answer.get("text")
+                or answer.get("short_answers")
+                or answer.get("long_answer")
+                or ""
+            )
+        elif isinstance(answer, list):
+            if not answer:
+                answer = ""
+            else:
+                a0 = answer[0]
+                if isinstance(a0, dict):
+                    answer = (
+                        a0.get("text")
+                        or a0.get("short_answers")
+                        or a0.get("long_answer")
+                        or ""
+                    )
+                else:
+                    answer = a0
+
+        context = clean_nl(context)
+        question = clean_nl(question)
+        answer = clean_nl(answer)
 
         if not context or not question or not answer:
             continue
@@ -103,7 +144,6 @@ def process_natural_questions_clean(
             {
                 "source": source,
                 "target": answer,
-                # treat as summarisation-like
                 "task": "summarization",
             }
         )
@@ -112,6 +152,7 @@ def process_natural_questions_clean(
             break
 
     return out
+
 def process_hotpot_qa(
     max_examples: int = 50_000,
     max_ctx_words: int = 512,
@@ -123,8 +164,9 @@ def process_hotpot_qa(
       dataset: 'hotpotqa/hotpot_qa', config 'distractor'
       key fields: 'question', 'answer', 'context'
 
-    'context' is a list of [title, sentences] pairs.
-    We join all documents into one long context, then ask for a short answer.
+    'context' can be:
+      - list of [title, [sent1, sent2, ...]] (older format), OR
+      - list of {"title": ..., "sentences": [...]} (newer format)
     """
     try:
         ds = load_dataset("hotpotqa/hotpot_qa", "distractor", split="train")
@@ -137,17 +179,38 @@ def process_hotpot_qa(
         question = clean_nl(s.get("question", ""))
         answer = clean_nl(s.get("answer", ""))
 
-        ctx_list = s.get("context", [])
+        ctx_list = s.get("context", []) or s.get("documents", []) or []
         passages = []
+
         for item in ctx_list:
-            # context entries are usually [title, [sent1, sent2, ...]]
-            if not isinstance(item, (list, tuple)) or len(item) != 2:
-                continue
-            title, sentences = item
+            title = ""
+            sentences = None
+
+            if isinstance(item, (list, tuple)) and len(item) >= 2:
+                # old-style [title, [sent1, sent2, ...]]
+                title, sentences = item[0], item[1]
+            elif isinstance(item, dict):
+                # new-style {"title": ..., "sentences": [...]}
+                title = item.get("title", "")
+                sentences = (
+                    item.get("sentences")
+                    or item.get("sentence")
+                    or item.get("text")
+                )
+            else:
+                # bare string or something weird – treat as text only
+                sentences = item
+
             title = clean_nl(title)
-            text = clean_nl(" ".join(sentences)) if isinstance(sentences, (list, tuple)) else clean_nl(sentences)
+
+            if isinstance(sentences, (list, tuple)):
+                text = clean_nl(" ".join(str(s) for s in sentences))
+            else:
+                text = clean_nl(sentences)
+
             if not text:
                 continue
+
             if title:
                 passages.append(f"{title}: {text}")
             else:
@@ -173,7 +236,6 @@ def process_hotpot_qa(
             {
                 "source": source,
                 "target": answer,
-                # still counted as summarisation-like
                 "task": "summarization",
             }
         )
@@ -814,14 +876,10 @@ def process_hendrycks_math(
     max_q_words: int = 256,
     max_a_words: int = 512,
 ) -> List[Dict]:
-    """
-    University-level math problems from hendrycks_math.
-    Fields: 'problem', 'solution'.
-    """
     try:
-        ds = load_dataset("hendrycks_math", "all", split="train")
+        ds = load_dataset("HuggingFaceTB/MATH", "all", split="train")
     except Exception as e:
-        print(f"⚠️ hendrycks_math not found – skipping. ({e})", file=sys.stderr)
+        print(f"⚠️ hendrycks_math/MATH not found – skipping. ({e})", file=sys.stderr)
         return []
 
     out: List[Dict] = []
