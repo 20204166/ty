@@ -51,9 +51,9 @@ max_length_input = 256
 max_length_target = 128
 # Desired task ratios for multi-task training (only used if the data has "task")
 TASK_RATIOS = {
-    "summarization": 0.3,
+    "summarization": 0.35,
     "code_cpp": 0.3,
-    "math": 0.4,
+    "math": 0.35,
 }
 # Optional cap on total number of examples after rebalancing
 TASK_MAX_TOTAL = None  # e.g. 500_000 or None for "whatever the data allows"
@@ -1425,7 +1425,7 @@ def warm_start_from_old_model(model, old_model_path):
 
     print(f"✅ Warm-start finished: copied weights for {copied} layers, skipped {skipped}.")
 
-def train_model(data_path, epochs=15, batch_size=64, emb_dim=50, train_from_scratch=False, phase="enc_tf_plus_head_synapses"):
+def train_model(data_path, epochs=15, batch_size=32, emb_dim=50, train_from_scratch=False, phase="enc_tf_plus_head_synapses"):
     inputs, targets = load_training_data(data_path)
     split = int(0.9 * len(inputs))
     save_dir = "app/models/saved_model"
@@ -1466,7 +1466,7 @@ def train_model(data_path, epochs=15, batch_size=64, emb_dim=50, train_from_scra
     num_train = len(train_enc)
 
     #  cap steps/epoch so Kaggle doesn't take 3h
-    MAX_STEPS_PER_EPOCH = 1500  # you can drop to 1000 if still too slow
+    MAX_STEPS_PER_EPOCH = 1250  # you can drop to 1000 if still too slow
     steps_per_epoch = min(
         MAX_STEPS_PER_EPOCH,
         max(1, num_train // batch_size),
@@ -1535,7 +1535,7 @@ def train_model(data_path, epochs=15, batch_size=64, emb_dim=50, train_from_scra
         configure_trainable_for_phase(model, phase)
 
         base_opt = Adam(
-            learning_rate=1e-3,
+            learning_rate=1e-4,
             global_clipnorm=1.0,  # gradient clipping
         )
         opt = base_opt
@@ -1597,7 +1597,7 @@ def train_model(data_path, epochs=15, batch_size=64, emb_dim=50, train_from_scra
             epochs=epochs,
             verbose=2,
             callbacks=callbacks,
-            initial_epoch=0, 
+            initial_epoch=5, 
             steps_per_epoch=steps_per_epoch,
             validation_data=val_ds,
             validation_steps=val_steps,
