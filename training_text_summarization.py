@@ -1425,7 +1425,7 @@ def warm_start_from_old_model(model, old_model_path):
 
     print(f"✅ Warm-start finished: copied weights for {copied} layers, skipped {skipped}.")
 
-def train_model(data_path, epochs=12, batch_size=32, emb_dim=50, train_from_scratch=False, phase="head_plus_synapses"):
+def train_model(data_path, epochs=12, batch_size=16, emb_dim=50, train_from_scratch=False, phase="head_plus_synapses"):
     inputs, targets = load_training_data(data_path)
     split = int(0.9 * len(inputs))
     save_dir = "app/models/saved_model"
@@ -1466,7 +1466,7 @@ def train_model(data_path, epochs=12, batch_size=32, emb_dim=50, train_from_scra
     num_train = len(train_enc)
 
     #  cap steps/epoch so Kaggle doesn't take 3h
-    MAX_STEPS_PER_EPOCH = 1000  # you can drop to 1000 if still too slow
+    MAX_STEPS_PER_EPOCH = 750  # you can drop to 1000 if still too slow
     steps_per_epoch = min(
         MAX_STEPS_PER_EPOCH,
         max(1, num_train // batch_size),
@@ -1597,7 +1597,7 @@ def train_model(data_path, epochs=12, batch_size=32, emb_dim=50, train_from_scra
             epochs=epochs,
             verbose=2,
             callbacks=callbacks,
-            initial_epoch=1, 
+            initial_epoch=2, 
             steps_per_epoch=steps_per_epoch,
             validation_data=val_ds,
             validation_steps=val_steps,
