@@ -1466,7 +1466,7 @@ def train_model(data_path, epochs=12, batch_size=16, emb_dim=50, train_from_scra
     num_train = len(train_enc)
 
     #  cap steps/epoch so Kaggle doesn't take 3h
-    MAX_STEPS_PER_EPOCH = 1350  # you can drop to 1000 if still too slow
+    MAX_STEPS_PER_EPOCH = 3000  # you can drop to 1000 if still too slow
     steps_per_epoch = min(
         MAX_STEPS_PER_EPOCH,
         max(1, num_train // batch_size),
@@ -1490,7 +1490,7 @@ def train_model(data_path, epochs=12, batch_size=16, emb_dim=50, train_from_scra
         len(val_enc) // batch_size + (1 if len(val_enc) % batch_size else 0),
     )
 
-    n_rouge = 50
+    n_rouge = 10
     rouge_ds = (
         tf.data.Dataset.from_tensor_slices(((val_enc, val_dec_in), val_dec_tgt))
         .shuffle(len(val_enc))
