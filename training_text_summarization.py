@@ -385,15 +385,20 @@ def build_seq2seq_model(
     enc_outs = Add(name="genc_ffn_res")([genc_ln2, genc_ffn2])
     # enc_outs stays shape (B, T_enc, enc_units) but is now globally enriched
     
-    # Decoder
+    
+    # Decoder: 2-layer LSTM
+    dec_inputs = Input(shape=(max_tgt,), name="dec_inputs")
+    dec_emb = Embedding(vocab_tgt, emb_dim, name="dec_emb")(dec_inputs)
+    dec_emb = Dropout(dropout_rate, name="dec_emb_dropout")(dec_emb)
+
     dec_lstm1 = tf.keras.layers.LSTM(
         dec_units,
         return_sequences=True,
         return_state=True,
         name="dec_lstm1",
     )
-    
     dec_out1, _, _ = dec_lstm1(dec_emb, initial_state=enc_states)
+
     dec_lstm2 = tf.keras.layers.LSTM(
         dec_units,
         return_sequences=True,
@@ -401,6 +406,7 @@ def build_seq2seq_model(
         name="dec_lstm2",
     )
     dec_out2, _, _ = dec_lstm2(dec_out1)
+
 
     # Cross-attention: decoder → encoder
     cross_attn = Attention(name="cross_attn")([dec_out2, enc_outs])
