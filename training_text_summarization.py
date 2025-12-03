@@ -1281,7 +1281,7 @@ def configure_trainable_for_phase(model, phase: str):
 
     elif phase == "decoder_plus_syn":
         for layer in model.layers:
-            ame = layer.name
+            name = layer.name
             if name.startswith("enc_"):
                 layer.trainable = False
             else:
