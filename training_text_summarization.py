@@ -2,6 +2,9 @@ import os
 
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"          # disable MKL/oneDNN fused ops
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+os.environ["TF_XLA_FLAGS"] = "--tf_xla_auto_jit=2"  # or 0 / whatever
+os.environ["TF_XLA_ENABLE_XLA_DEVICES"] = "true"
+
 
 import json
 import subprocess
@@ -297,24 +300,22 @@ def build_seq2seq_model(
     enc_emb = Embedding(vocab_in, emb_dim, name="enc_emb")(enc_inputs)
     enc_emb = Dropout(dropout_rate, name="enc_emb_dropout")(enc_emb)
 
-    # Encoder: 2-layer LSTM
-    enc_cell1 = LSTMCell(enc_units, name="enc_cell1")
-    enc_rnn1 = tf.keras.layers.RNN(
-        enc_cell1,
+    # Encoder
+    enc_lstm1 = tf.keras.layers.LSTM(
+        enc_units,
         return_sequences=True,
         return_state=True,
-        name="enc_rnn1",
+        name="enc_lstm1",
     )
-    out1, h1, c1 = enc_rnn1(enc_emb)
-
-    enc_cell2 = LSTMCell(enc_units, name="enc_cell2")
-    enc_rnn2 = tf.keras.layers.RNN(
-        enc_cell2,
+    out1, h1, c1 = enc_lstm1(enc_emb)
+    
+    enc_lstm2 = tf.keras.layers.LSTM(
+        enc_units,
         return_sequences=True,
         return_state=True,
-        name="enc_rnn2",
+        name="enc_lstm2",
     )
-    enc_outs, h2, c2 = enc_rnn2(out1)
+    enc_outs, h2, c2 = enc_lstm2(out1)
     enc_states = [h2, c2]
 
     enc_self_attn = Attention(name="enc_self_attn")([enc_outs, enc_outs])
@@ -383,29 +384,23 @@ def build_seq2seq_model(
 
     enc_outs = Add(name="genc_ffn_res")([genc_ln2, genc_ffn2])
     # enc_outs stays shape (B, T_enc, enc_units) but is now globally enriched
-
-    # Decoder: 2-layer LSTM
-    dec_inputs = Input(shape=(max_tgt,), name="dec_inputs")
-    dec_emb = Embedding(vocab_tgt, emb_dim, name="dec_emb")(dec_inputs)
-    dec_emb = Dropout(dropout_rate, name="dec_emb_dropout")(dec_emb)
-
-    dec_cell1 = LSTMCell(dec_units, name="dec_cell1")
-    dec_rnn1 = tf.keras.layers.RNN(
-        dec_cell1,
+    
+    # Decoder
+    dec_lstm1 = tf.keras.layers.LSTM(
+        dec_units,
         return_sequences=True,
         return_state=True,
-        name="dec_rnn1",
+        name="dec_lstm1",
     )
-    dec_out1, _, _ = dec_rnn1(dec_emb, initial_state=enc_states)
-
-    dec_cell2 = LSTMCell(dec_units, name="dec_cell2")
-    dec_rnn2 = tf.keras.layers.RNN(
-        dec_cell2,
+    
+    dec_out1, _, _ = dec_lstm1(dec_emb, initial_state=enc_states)
+    dec_lstm2 = tf.keras.layers.LSTM(
+        dec_units,
         return_sequences=True,
         return_state=True,
-        name="dec_rnn2",
+        name="dec_lstm2",
     )
-    dec_out2, _, _ = dec_rnn2(dec_out1)
+    dec_out2, _, _ = dec_lstm2(dec_out1)
 
     # Cross-attention: decoder → encoder
     cross_attn = Attention(name="cross_attn")([dec_out2, enc_outs])
@@ -1304,7 +1299,7 @@ def warm_start_from_old_model(model, old_model_path):
 
     print(f"✅ Warm-start finished: copied weights for {copied} layers, skipped {skipped}.")
 
-def train_model(data_path, epochs=28, batch_size=32, emb_dim=64, train_from_scratch=False, phase="all"):
+def train_model(data_path, epochs=28, batch_size=32, emb_dim=64, train_from_scratch=True, phase="all"):
     inputs, targets = load_training_data(data_path)
     split = int(0.9 * len(inputs))
     save_dir = "app/models/saved_model"
