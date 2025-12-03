@@ -1,5 +1,3 @@
-
-
 import os
 
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"          # disable MKL/oneDNN fused ops
@@ -386,7 +384,7 @@ def build_seq2seq_model(
     # enc_outs stays shape (B, T_enc, enc_units) but is now globally enriched
 
     enc_tf_proj = Dense(
-        512,
+        128,
         activation="relu",
         name="enc_tf_proj",
     )(enc_outs) 
@@ -394,16 +392,16 @@ def build_seq2seq_model(
     enc_tf_ln1 = LayerNormalization(name="enc_tf_ln1")(enc_tf_proj)
 
     enc_tf_mha = MultiHeadAttention(
-        num_heads=8,
-        key_dim=64,
+        num_heads=4,
+        key_dim=32,
         name="enc_tf_mha",
     )(enc_tf_ln1, enc_tf_ln1)      # (B, T_enc, 512)
 
     enc_tf_res1 = Add(name="enc_tf_res1")([enc_tf_proj, enc_tf_mha])
 
     enc_tf_ln2 = LayerNormalization(name="enc_tf_ln2")(enc_tf_res1)
-    enc_tf_ffn1 = Dense(2048, activation="relu", name="enc_tf_ffn1")(enc_tf_ln2)
-    enc_tf_ffn2 = Dense(512, name="enc_tf_ffn2")(enc_tf_ffn1)
+    enc_tf_ffn1 = Dense(512, activation="relu", name="enc_tf_ffn1")(enc_tf_ln2)
+    enc_tf_ffn2 = Dense(128, name="enc_tf_ffn2")(enc_tf_ffn1)
     enc_tf_res2 = Add(name="enc_tf_res2")([enc_tf_res1, enc_tf_ffn2])
 
     enc_tf_back = Dense(
@@ -475,7 +473,7 @@ def build_seq2seq_model(
     )(dec_context)
 
     lin_tf_proj = Dense(
-        256,
+        128,
         activation="relu",
         name="lin_tf_proj",
     )(dec_linear)   # (B, T_dec, 256)
@@ -483,7 +481,7 @@ def build_seq2seq_model(
     lin_tf_ln1 = LayerNormalization(name="lin_tf_ln1")(lin_tf_proj)
 
     lin_tf_mha = MultiHeadAttention(
-        num_heads=4,
+        num_heads=2,
         key_dim=64,
         name="lin_tf_mha",
     )(lin_tf_ln1, lin_tf_ln1)  # (B, T_dec, 256)
@@ -491,8 +489,8 @@ def build_seq2seq_model(
     lin_tf_res1 = Add(name="lin_tf_res1")([lin_tf_proj, lin_tf_mha])
 
     lin_tf_ln2 = LayerNormalization(name="lin_tf_ln2")(lin_tf_res1)
-    lin_tf_ffn1 = Dense(1024, activation="relu", name="lin_tf_ffn1")(lin_tf_ln2)
-    lin_tf_ffn2 = Dense(256, name="lin_tf_ffn2")(lin_tf_ffn1)
+    lin_tf_ffn1 = Dense(512, activation="relu", name="lin_tf_ffn1")(lin_tf_ln2)
+    lin_tf_ffn2 = Dense(128, name="lin_tf_ffn2")(lin_tf_ffn1)
     lin_tf_res2 = Add(name="lin_tf_res2")([lin_tf_res1, lin_tf_ffn2])
 
     lin_tf_back = Dense(dec_units, name="lin_tf_backproj")(lin_tf_res2)
@@ -540,60 +538,6 @@ def build_seq2seq_model(
     gdec_ffn2 = Dense(dec_units, name="gdec_ffn2")(gdec_ffn1)
 
     dec_context = Add(name="gdec_ffn_res")([gdec_ln2, gdec_ffn2])
-    # dec_context now = GLOBAL + local, same shape as before
-
-    
-    ### === TRANSFORMER BLOCK 1 (TF1, 512-dim) AFTER GLOBAL DECODER ===
-    # Use encoder summary + decoder context together
-
-    tf1_enc_pool = Lambda(
-        lambda x: tf.reduce_mean(x, axis=1),
-        name="tf1_enc_pool",
-    )(enc_outs)  # (B, 128)
-
-    tf1_enc_proj = Dense(
-        dec_units,
-        activation="tanh",
-        name="tf1_enc_proj",
-    )(tf1_enc_pool)  # (B, 128)
-
-    tf1_enc_expand = Lambda(
-        lambda x: tf.expand_dims(x, axis=1),
-        name="tf1_enc_expand",
-    )(tf1_enc_proj)  # (B, 1, 128)
-
-    tf1_enc_broadcast = Lambda(
-        lambda pair: tf.tile(pair[0], [1, tf.shape(pair[1])[1], 1]),
-        name="tf1_enc_broadcast",
-    )([tf1_enc_expand, dec_context])  # (B, T_dec, 128)
-
-    tf1_in = Concatenate(name="tf1_in_concat")(
-        [dec_context, tf1_enc_broadcast]
-    )  # (B, T_dec, 256)
-
-    tf1_proj = Dense(
-        512,
-        activation="relu",
-        name="tf1_proj",
-    )(tf1_in)  # (B, T_dec, 512)
-
-    tf1_ln1 = LayerNormalization(name="tf1_ln1")(tf1_proj)
-
-    tf1_mha = MultiHeadAttention(
-        num_heads=8,
-        key_dim=64,
-        name="tf1_mha",
-    )(tf1_ln1, tf1_ln1)  # (B, T_dec, 512)
-
-    tf1_res1 = Add(name="tf1_res1")([tf1_proj, tf1_mha])
-
-    tf1_ln2 = LayerNormalization(name="tf1_ln2")(tf1_res1)
-    tf1_ffn1 = Dense(2048, activation="relu", name="tf1_ffn1")(tf1_ln2)
-    tf1_ffn2 = Dense(512, name="tf1_ffn2")(tf1_ffn1)
-    tf1_res2 = Add(name="tf1_res2")([tf1_res1, tf1_ffn2])
-
-    tf1_back = Dense(dec_units, name="tf1_backproj")(tf1_res2)
-    dec_context = Add(name="tf1_out_res")([dec_context, tf1_back])
     
     #NEW STREAM 3: dual-side synapse path (encoder <-> decoder)
     # Project encoder + decoder into a shared space and let them attend to each other.
@@ -681,7 +625,7 @@ def build_seq2seq_model(
     ### === TRANSFORMER BLOCK 2 (TF2, 512-dim) BEFORE LOGITS ===
     
     tf2_proj = Dense(
-        512,
+        256,
         activation="relu",
         name="tf2_proj",
     )(dec_final)  # (B, T_dec, 512)
@@ -689,7 +633,7 @@ def build_seq2seq_model(
     tf2_ln1 = LayerNormalization(name="tf2_ln1")(tf2_proj)
 
     tf2_mha = MultiHeadAttention(
-        num_heads=8,
+        num_heads=4,
         key_dim=64,
         name="tf2_mha",
     )(tf2_ln1, tf2_ln1)  # (B, T_dec, 512)
@@ -697,8 +641,8 @@ def build_seq2seq_model(
     tf2_res1 = Add(name="tf2_res1")([tf2_proj, tf2_mha])
 
     tf2_ln2 = LayerNormalization(name="tf2_ln2")(tf2_res1)
-    tf2_ffn1 = Dense(2048, activation="relu", name="tf2_ffn1")(tf2_ln2)
-    tf2_ffn2 = Dense(512, name="tf2_ffn2")(tf2_ffn1)
+    tf2_ffn1 = Dense(1024, activation="relu", name="tf2_ffn1")(tf2_ln2)
+    tf2_ffn2 = Dense(256, name="tf2_ffn2")(tf2_ffn1)
     tf2_res2 = Add(name="tf2_res2")([tf2_res1, tf2_ffn2])
 
     tf2_back = Dense(dec_units, name="tf2_backproj")(tf2_res2)
@@ -1301,14 +1245,7 @@ def configure_trainable_for_phase(model, phase: str):
             "syn_enc_proj", "syn_dec_proj", "syn_cross_attn",
             "syn_gate1", "syn_gate2",
             "refine_ffn1", "refine_ffn2",
-            
-            "tf1_proj", "tf1_ln1", "tf1_mha",
-            "tf1_res1", "tf1_ln2", "tf1_ffn1", "tf1_ffn2",
-            "tf1_res2", "tf1_backproj", "tf1_out_res",
-            
-            "tf2_proj", "tf2_ln1", "tf2_mha",
-            "tf2_res1", "tf2_ln2", "tf2_ffn1", "tf2_ffn2",
-            "tf2_res2", "tf2_backproj", "tf2_out_res",
+
             
             "decoder_dense",
         ]
@@ -1427,7 +1364,7 @@ def warm_start_from_old_model(model, old_model_path):
 
     print(f"✅ Warm-start finished: copied weights for {copied} layers, skipped {skipped}.")
 
-def train_model(data_path, epochs=20, batch_size=32, emb_dim=50, train_from_scratch=True, phase="all"):
+def train_model(data_path, epochs=12, batch_size=64, emb_dim=64, train_from_scratch=True, phase="all"):
     inputs, targets = load_training_data(data_path)
     split = int(0.9 * len(inputs))
     save_dir = "app/models/saved_model"
