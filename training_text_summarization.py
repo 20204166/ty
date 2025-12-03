@@ -52,8 +52,8 @@ max_length_input = 512
 max_length_target = 256
 # Desired task ratios for multi-task training (only used if the data has "task")
 TASK_RATIOS = {
-    "summarization": 0.35,
-    "code_cpp": 0.3,
+    "summarization": 0.2,
+    "code_cpp": 0.35,
     "math": 0.35,
 }
 # Optional cap on total number of examples after rebalancing
@@ -1305,7 +1305,7 @@ def warm_start_from_old_model(model, old_model_path):
 
     print(f"✅ Warm-start finished: copied weights for {copied} layers, skipped {skipped}.")
 
-def train_model(data_path, epochs=28, batch_size=32, emb_dim=64, train_from_scratch=True, phase="all"):
+def train_model(data_path, epochs=8, batch_size=64, emb_dim=64, train_from_scratch=False, phase="head_plus_synapses"):
     inputs, targets = load_training_data(data_path)
     split = int(0.9 * len(inputs))
     save_dir = "app/models/saved_model"
@@ -1346,7 +1346,7 @@ def train_model(data_path, epochs=28, batch_size=32, emb_dim=64, train_from_scra
     num_train = len(train_enc)
 
     #  cap steps/epoch so Kaggle doesn't take 3h
-    MAX_STEPS_PER_EPOCH = 250  # you can drop to 1000 if still too slow
+    MAX_STEPS_PER_EPOCH = 700  # you can drop to 1000 if still too slow
     steps_per_epoch = min(
         MAX_STEPS_PER_EPOCH,
         max(1, num_train // batch_size),
@@ -1370,7 +1370,7 @@ def train_model(data_path, epochs=28, batch_size=32, emb_dim=64, train_from_scra
         len(val_enc) // batch_size + (1 if len(val_enc) % batch_size else 0),
     )
 
-    n_rouge = 2
+    n_rouge = 10
     rouge_ds = (
         tf.data.Dataset.from_tensor_slices(((val_enc, val_dec_in), val_dec_tgt))
         .shuffle(len(val_enc))
@@ -1415,7 +1415,7 @@ def train_model(data_path, epochs=28, batch_size=32, emb_dim=64, train_from_scra
         configure_trainable_for_phase(model, phase)
 
         base_opt = Adam(
-            learning_rate=1e-3,
+            learning_rate=3e-6,
             global_clipnorm=1.0,  # gradient clipping
         )
         opt = base_opt
