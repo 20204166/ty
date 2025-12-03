@@ -2,7 +2,7 @@ import os
 
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"          # disable MKL/oneDNN fused ops
 os.environ["TF_XLA_FLAGS"] = "--tf_xla_auto_jit=0"
-os.environ["TF_XLA_ENABLE_XLA_DEVICES"] = "false"
+os.environ["TF_XLA_ENABLE_XLA_DEVICES"] = "true"
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 
 import json
@@ -56,7 +56,7 @@ TASK_RATIOS = {
     "math": 0.35,
 }
 # Optional cap on total number of examples after rebalancing
-TASK_MAX_TOTAL = None  # e.g. 500_000 or None for "whatever the data allows"
+TASK_MAX_TOTAL = 500_000   # e.g. 500_000 or None for "whatever the data allows"
 ENABLE_TASK_SAMPLING = True
 
 
@@ -337,7 +337,6 @@ def build_seq2seq_model(
 
     # ===== GLOBAL ENCODER BLOCK (hierarchical on encoder side) =====
     
-
     genc_ln1 = LayerNormalization(name="genc_ln1")(enc_outs)
 
     # Pool over time to get a global summary
@@ -383,34 +382,6 @@ def build_seq2seq_model(
     enc_outs = Add(name="genc_ffn_res")([genc_ln2, genc_ffn2])
     # enc_outs stays shape (B, T_enc, enc_units) but is now globally enriched
 
-    # --- trimmed encoder TF block ---
-    enc_tf_proj = Dense(
-        enc_units,                 # 128 instead of hard-coded 128
-        activation="relu",
-        name="enc_tf_proj",
-    )(enc_outs)
-
-    enc_tf_ln1 = LayerNormalization(name="enc_tf_ln1")(enc_tf_proj)
-
-    enc_tf_mha = MultiHeadAttention(
-        num_heads=2,               # was 4
-        key_dim=enc_units // 4,    # 32 if enc_units=128
-        name="enc_tf_mha",
-    )(enc_tf_ln1, enc_tf_ln1)
-
-    enc_tf_res1 = Add(name="enc_tf_res1")([enc_tf_proj, enc_tf_mha])
-
-    enc_tf_ln2 = LayerNormalization(name="enc_tf_ln2")(enc_tf_res1)
-    enc_tf_ffn1 = Dense(enc_units * 2, activation="relu", name="enc_tf_ffn1")(enc_tf_ln2)  # 256
-    enc_tf_ffn2 = Dense(enc_units, name="enc_tf_ffn2")(enc_tf_ffn1)                        # 128
-    enc_tf_res2 = Add(name="enc_tf_res2")([enc_tf_res1, enc_tf_ffn2])
-            
-
-    # Final encoder representation: LSTM + global + transformer
-    enc_outs = Add(name="enc_tf_out_res")([enc_outs, enc_tf_back])
-    
-
-
     # Decoder: 2-layer LSTM
     dec_inputs = Input(shape=(max_tgt,), name="dec_inputs")
     dec_emb = Embedding(vocab_tgt, emb_dim, name="dec_emb")(dec_inputs)
@@ -439,7 +410,6 @@ def build_seq2seq_model(
 
     cross_attn_local = Attention(name="cross_attn_local")([dec_out2, enc_local])
 
-
     # Self-attention on the decoder outputs: decoder → decoder
     self_attn = Attention(name="self_attn")([dec_out2, dec_out2])
     
@@ -447,8 +417,6 @@ def build_seq2seq_model(
     fused = Add(name="decoder_fused")(
         [dec_out2, cross_attn, cross_attn_local, self_attn]
     )
-
-
 
     dec_norm = LayerNormalization(name="dec_ln")(fused)
 
@@ -469,33 +437,14 @@ def build_seq2seq_model(
         name="dec_linear_stream",
     )(dec_context)
 
-    # --- trimmed linear decoder TF block ---
-    lin_tf_proj = Dense(
-        dec_units,                 # 128
-        activation="relu",
-        name="lin_tf_proj",
-    )(dec_linear)
-
-    lin_tf_ln1 = LayerNormalization(name="lin_tf_ln1")(lin_tf_proj)
-
-    lin_tf_mha = MultiHeadAttention(
-        num_heads=1,               # was 2
-        key_dim=dec_units // 2,    # 64 if dec_units=128
-        name="lin_tf_mha",
-    )(lin_tf_ln1, lin_tf_ln1)
-
-    lin_tf_res1 = Add(name="lin_tf_res1")([lin_tf_proj, lin_tf_mha])
-
-    lin_tf_ln2 = LayerNormalization(name="lin_tf_ln2")(lin_tf_res1)
-    lin_tf_ffn1 = Dense(dec_units * 2, activation="relu", name="lin_tf_ffn1")(lin_tf_ln2)  # 256
-    lin_tf_ffn2 = Dense(dec_units, name="lin_tf_ffn2")(lin_tf_ffn1)                        # 128
-    lin_tf_res2 = Add(name="lin_tf_res2")([lin_tf_res1, lin_tf_ffn2])
-
-    lin_tf_back = Dense(dec_units, name="lin_tf_backproj")(lin_tf_res2)
-    dec_linear_enh = Add(name="lin_tf_out_res")([dec_linear, lin_tf_back])
-
-    # ===== GLOBAL DECODER BLOCK (hierarchical on decoder side) =====
+    # STREAM 2: shallow decoder-only linear stream (extra linear reasoning path)
+    dec_linear = Dense(
+        dec_units,
+        activation="tanh",
+        name="dec_linear_stream",
+    )(dec_context)
     
+    dec_linear_enh = dec_linear
 
     gdec_ln1 = LayerNormalization(name="gdec_ln1")(dec_context)
 
@@ -620,11 +569,8 @@ def build_seq2seq_model(
         [refine_attn_res, refine_ffn, gated_syn1, gated_syn2]
     )
 
-    ### === TRANSFORMER BLOCK 2 (TF2, 512-dim) BEFORE LOGITS ===
-    
-    # --- trimmed final decoder TF block ---
     tf2_proj = Dense(
-        dec_units,                 # 128 instead of 256
+        dec_units,                 # 128 (or 256 if you bump units)
         activation="relu",
         name="tf2_proj",
     )(dec_final)
@@ -632,8 +578,8 @@ def build_seq2seq_model(
     tf2_ln1 = LayerNormalization(name="tf2_ln1")(tf2_proj)
 
     tf2_mha = MultiHeadAttention(
-        num_heads=2,               # was 4
-        key_dim=dec_units // 4,    # 32 if dec_units=128
+        num_heads=2,               # small
+        key_dim=dec_units // 4,    # 32 if 128 units
         name="tf2_mha",
     )(tf2_ln1, tf2_ln1)
 
