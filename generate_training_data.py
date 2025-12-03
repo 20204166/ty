@@ -1391,13 +1391,6 @@ def save_combined_data(
     except Exception as e:
         print(f"⚠️ Error processing HotpotQA: {e}", file=sys.stderr)
 
-    try:
-        squad_data = process_squad(max_examples=max_per_summarization)
-        parts.extend(squad_data)
-        print(f"Processed SQuAD: {len(squad_data)} examples")
-    except Exception as e:
-        print(f"⚠️ Error processing SQuAD: {e}", file=sys.stderr)
-        
     # ---- C++ code ----
     try:
         cpp_data = process_cpp_vault(max_examples=max_cpp)
