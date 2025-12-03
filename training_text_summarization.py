@@ -1,8 +1,6 @@
 import os
 
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"          # disable MKL/oneDNN fused ops
-os.environ["TF_XLA_FLAGS"] = "--tf_xla_auto_jit=0"
-os.environ["TF_XLA_ENABLE_XLA_DEVICES"] = "true"
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 
 import json
@@ -115,6 +113,10 @@ def sample_by_task_ratios(data, ratios, max_total=None, seed=42):
 
     random.shuffle(result)
     return result
+    
+@tf.function(jit_compile=True)
+def masked_sparse_ce_tf(y_true, y_pred):
+    return masked_sparse_ce(y_true, y_pred)
 
 def load_training_data(data_path: str, input_key: str = None, target_key: str = None):
     """
@@ -437,13 +439,6 @@ def build_seq2seq_model(
         name="dec_linear_stream",
     )(dec_context)
 
-    # STREAM 2: shallow decoder-only linear stream (extra linear reasoning path)
-    dec_linear = Dense(
-        dec_units,
-        activation="tanh",
-        name="dec_linear_stream",
-    )(dec_context)
-    
     dec_linear_enh = dec_linear
 
     gdec_ln1 = LayerNormalization(name="gdec_ln1")(dec_context)
@@ -1426,7 +1421,7 @@ def train_model(data_path, epochs=12, batch_size=64, emb_dim=64, train_from_scra
 
         model.compile(
             optimizer=opt,
-            loss=masked_sparse_ce,
+            loss=masked_sparse_ce_tf,
             metrics=[tf.keras.metrics.SparseCategoricalAccuracy(name="token_accuracy")],
         )
 
