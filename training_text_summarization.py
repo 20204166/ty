@@ -49,8 +49,8 @@ USE_MULTI_GPU = False # set False for 1 GPU, True for both
 
 
 
-max_length_input = 256
-max_length_target = 128
+max_length_input = 512
+max_length_target = 256
 # Desired task ratios for multi-task training (only used if the data has "task")
 TASK_RATIOS = {
     "summarization": 0.35,
