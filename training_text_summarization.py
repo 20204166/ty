@@ -1346,7 +1346,7 @@ def train_model(data_path, epochs=35, batch_size=32, emb_dim=64, train_from_scra
     num_train = len(train_enc)
 
     #  cap steps/epoch so Kaggle doesn't take 3h
-    MAX_STEPS_PER_EPOCH = 1100 # you can drop to 1000 if still too slow
+    MAX_STEPS_PER_EPOCH = 2600 # you can drop to 1000 if still too slow
     steps_per_epoch = min(
         MAX_STEPS_PER_EPOCH,
         max(1, num_train // batch_size),
