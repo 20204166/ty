@@ -540,60 +540,70 @@ def process_cpp_vault(
     max_code_chars: int = 4000,
 ) -> List[Dict]:
     """
-    C++ code generation from Fsoft-AIC/the-vault-function:
-      - we filter language="C++"
-      - we use docstring as description, code as target
-      - streaming=True because the dataset is very large
+    SQL generation from gretelai/synthetic_text_to_sql.
 
-    NOTE: This dataset currently relies on a Python loading script and may
-    be skipped on Kaggle / datasets>=4 with "dataset scripts not supported".
+    We take:
+      - sql_prompt       -> natural language question
+      - sql_context      -> schema / CREATE TABLE context
+      - sql              -> target SQL query
+
+    and turn it into an instruction-style text-to-SQL task.
+
+    NOTE: We keep task="code_cpp" so this still falls into your existing
+    "code" bucket without changing TASK_RATIOS or training logic.
     """
     try:
-        data = load_dataset(
-            "Fsoft-AIC/the-vault-function",
-            split_set=["train"],
-            languages=["C++"],
-            streaming=True,
-            trust_remote_code=True,
-        )
+        ds = load_dataset("gretelai/synthetic_text_to_sql", split="train")
     except Exception as e:
-        print(f"⚠️ the-vault-function (C++) not found – skipping. ({e})", file=sys.stderr)
+        print(f"⚠️ synthetic_text_to_sql not found – skipping. ({e})", file=sys.stderr)
         return []
 
-    stream = data.get("train", None)
-    if stream is None:
-        stream = next(iter(data.values()))
-
     out: List[Dict] = []
-    for sample in stream:
-        docstring = (
-            sample.get("docstring")
-            or sample.get("short_docstring")
-            or sample.get("original_docstring")
-            or ""
-        )
-        code = sample.get("code") or sample.get("original_string") or ""
 
-        if not docstring or not code:
+    for s in ds:
+        # natural language question
+        question = clean_nl(s.get("sql_prompt", ""))
+
+        # DB schema / CREATE TABLE context
+        context = clean_nl(s.get("sql_context", ""))
+
+        # target SQL query
+        sql = s.get("sql", "") or ""
+        code_str = str(sql).strip()
+
+        if not question or not code_str:
             continue
 
-        desc = truncate_words(clean_nl(docstring), max_desc_words)
-        code_str = str(code).strip()
+        # limit NL side a bit (question and schema)
+        question = truncate_words(question, max_desc_words)
+        if context:
+            # allow a bit more for schema than for question
+            context = truncate_words(context, max_desc_words * 4)
+
+        # truncate SQL length in characters
         if len(code_str) > max_code_chars:
             code_str = code_str[:max_code_chars]
 
+        # optional explanation if you ever want it later
+        # explanation = clean_nl(s.get("sql_explanation", ""))
+
+        schema_block = f"Schema:\n{context}\n\n" if context else ""
+
         source = (
-            "[CODE_CPP]\n"
-            "You are an assistant that writes clean, well-formatted C++ code.\n"
-            "Write a C++ function that matches this description:\n\n"
-            f"{desc}\n\n"
-            "C++ code:"
+            "[CODE_SQL]\n"
+            "You are an assistant that writes correct, efficient SQL queries.\n"
+            "Given the database schema and the question, write a single SQL "
+            "query that answers it.\n\n"
+            f"{schema_block}"
+            f"Question: {question}\n\n"
+            "SQL:"
         )
 
         out.append(
             {
                 "source": source,
                 "target": code_str,
+                # keep it in the same 'code' bucket as before
                 "task": "code_cpp",
             }
         )
@@ -602,6 +612,7 @@ def process_cpp_vault(
             break
 
     return out
+
     
 def process_codeparrot_general(
     max_examples: int = 50_000,
