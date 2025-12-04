@@ -338,6 +338,19 @@ def build_seq2seq_model(
 
     enc_local = enc_outs
 
+    tiny_enc_ln = LayerNormalization(name="tiny_enc_ln")(enc_outs)
+    tiny_enc_attn = MultiHeadAttention(
+        num_heads=2,
+        key_dim=enc_units // 4,
+        name="tiny_enc_mha"
+    )(
+        query=tiny_enc_ln,
+        value=tiny_enc_ln,
+        key=tiny_enc_ln,
+    )
+    tiny_enc_res = Add(name="tiny_enc_res")([enc_outs, tiny_enc_attn])
+    enc_outs = LayerNormalization(name="tiny_enc_post_ln")(tiny_enc_res)
+    
     # ===== GLOBAL ENCODER BLOCK (hierarchical on encoder side) =====
     
     genc_ln1 = LayerNormalization(name="genc_ln1")(enc_outs)
@@ -597,6 +610,7 @@ def build_seq2seq_model(
     )(dec_final)
     
     dec_final = Add(name="pos_align_res")([dec_final, pos_align])
+    dec_final = LayerNormalization(name="pos_align_ln")(dec_final)
     # =======================================================
 
     # Final logits from refined decoder representation
@@ -1315,7 +1329,7 @@ def warm_start_from_old_model(model, old_model_path):
 
     print(f"✅ Warm-start finished: copied weights for {copied} layers, skipped {skipped}.")
 
-def train_model(data_path, epochs=4, batch_size=16, emb_dim=64, train_from_scratch=False, phase="all"):
+def train_model(data_path, epochs=6, batch_size=16, emb_dim=64, train_from_scratch=False, phase="all"):
     inputs, targets = load_training_data(data_path)
     split = int(0.9 * len(inputs))
     save_dir = "app/models/saved_model"
