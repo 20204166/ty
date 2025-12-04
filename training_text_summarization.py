@@ -1370,7 +1370,7 @@ def train_model(data_path, epochs=35, batch_size=32, emb_dim=64, train_from_scra
         len(val_enc) // batch_size + (1 if len(val_enc) % batch_size else 0),
     )
 
-    n_rouge = 100
+    n_rouge = 25
     rouge_ds = (
         tf.data.Dataset.from_tensor_slices(((val_enc, val_dec_in), val_dec_tgt))
         .shuffle(len(val_enc))
