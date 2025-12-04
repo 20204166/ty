@@ -52,9 +52,9 @@ max_length_input = 512
 max_length_target = 256
 # Desired task ratios for multi-task training (only used if the data has "task")
 TASK_RATIOS = {
-    "summarization": 0.4,
-    "code_cpp": 0.3,
-    "math": 0.3,
+    "summarization": 0.3,
+    "code_cpp": 0.35,
+    "math": 0.35,
 }
 # Optional cap on total number of examples after rebalancing
 TASK_MAX_TOTAL = 500_000   # e.g. 500_000 or None for "whatever the data allows"
@@ -1305,7 +1305,7 @@ def warm_start_from_old_model(model, old_model_path):
 
     print(f"✅ Warm-start finished: copied weights for {copied} layers, skipped {skipped}.")
 
-def train_model(data_path, epochs=4, batch_size=32, emb_dim=64, train_from_scratch=False, phase="new_streams_warmup"):
+def train_model(data_path, epochs=7, batch_size=32, emb_dim=64, train_from_scratch=False, phase="global_only"):
     inputs, targets = load_training_data(data_path)
     split = int(0.9 * len(inputs))
     save_dir = "app/models/saved_model"
@@ -1415,7 +1415,7 @@ def train_model(data_path, epochs=4, batch_size=32, emb_dim=64, train_from_scrat
         configure_trainable_for_phase(model, phase)
 
         base_opt = Adam(
-            learning_rate=3e-6,
+            learning_rate=5e-6,
             global_clipnorm=1.0,  # gradient clipping
         )
         opt = base_opt
@@ -1477,7 +1477,7 @@ def train_model(data_path, epochs=4, batch_size=32, emb_dim=64, train_from_scrat
             epochs=epochs,
             verbose=2,
             callbacks=callbacks,
-            initial_epoch=1, 
+            initial_epoch=0, 
             steps_per_epoch=steps_per_epoch,
             validation_data=val_ds,
             validation_steps=val_steps,
