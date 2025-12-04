@@ -1557,8 +1557,8 @@ if __name__ == "__main__":
 
     save_combined_data(
         output_file=out_path,
-        max_per_summarization=130_000,  # tune for GPU budget
-        max_cpp=130_000,
-        max_math=150_000,
+        max_per_summarization=150_000,  # tune for GPU budget
+        max_cpp=180_000,
+        max_math=1700_000,
         custom_jsonl=custom_path,
     )
