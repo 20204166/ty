@@ -52,8 +52,8 @@ max_length_input = 512
 max_length_target = 256
 # Desired task ratios for multi-task training (only used if the data has "task")
 TASK_RATIOS = {
-    "summarization": 0.3,
-    "code_cpp": 0.35,
+    "summarization": 0.35,
+    "code_cpp": 0.3,
     "math": 0.35,
 }
 # Optional cap on total number of examples after rebalancing
