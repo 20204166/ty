@@ -589,6 +589,16 @@ def build_seq2seq_model(
     tf2_back = Dense(dec_units, name="tf2_backproj")(tf2_res2)
     dec_final = Add(name="tf2_out_res")([dec_final, tf2_back])
 
+    # ===== POSITIONAL ALIGNMENT LAYER (you requested) =====
+    pos_align = Dense(
+        dec_units,               # <-- use dec_units because your model uses 128 here
+        activation="linear",
+        name="pos_align"
+    )(dec_final)
+    
+    dec_final = Add(name="pos_align_res")([dec_final, pos_align])
+    # =======================================================
+
     # Final logits from refined decoder representation
     outputs = Dense(
         vocab_tgt,
