@@ -27,10 +27,10 @@ from tensorflow.keras import mixed_precision
 mixed_precision.set_global_policy("mixed_float16")
 
 # ===== MUST MATCH TRAINING =====
-MAX_VOCAB = 50_000
-max_length_input = 256
-max_length_target = 128
-EMB_DIM = 50          # <- change if you trained with different emb_dim
+MAX_VOCAB = 30_000
+max_length_input = 512
+max_length_target = 256
+EMB_DIM = 64          # <- change if you trained with different emb_dim
 
 MODEL_DIR = "app/models/saved_model"
 TOK_IN_PATH = os.path.join(MODEL_DIR, "tokenizer_input.json")
@@ -64,32 +64,28 @@ def build_seq2seq_model(
     dec_units=128,
     dropout_rate=0.3,
 ):
-    # ---------- ENCODER ----------
     enc_inputs = Input(shape=(max_in,), name="enc_inputs")
     enc_emb = Embedding(vocab_in, emb_dim, name="enc_emb")(enc_inputs)
     enc_emb = Dropout(dropout_rate, name="enc_emb_dropout")(enc_emb)
 
-    # Encoder: 2-layer LSTM
-    enc_cell1 = LSTMCell(enc_units, name="enc_cell1")
-    enc_rnn1 = tf.keras.layers.RNN(
-        enc_cell1,
+    # Encoder
+    enc_lstm1 = tf.keras.layers.LSTM(
+        enc_units,
         return_sequences=True,
         return_state=True,
-        name="enc_rnn1",
+        name="enc_lstm1",
     )
-    out1, h1, c1 = enc_rnn1(enc_emb)
-
-    enc_cell2 = LSTMCell(enc_units, name="enc_cell2")
-    enc_rnn2 = tf.keras.layers.RNN(
-        enc_cell2,
+    out1, h1, c1 = enc_lstm1(enc_emb)
+    
+    enc_lstm2 = tf.keras.layers.LSTM(
+        enc_units,
         return_sequences=True,
         return_state=True,
-        name="enc_rnn2",
+        name="enc_lstm2",
     )
-    enc_outs, h2, c2 = enc_rnn2(out1)
+    enc_outs, h2, c2 = enc_lstm2(out1)
     enc_states = [h2, c2]
 
-    # Local self-attention
     enc_self_attn = Attention(name="enc_self_attn")([enc_outs, enc_outs])
 
     # Fuse raw encoder outputs + self-attention into a single sequence
@@ -101,17 +97,17 @@ def build_seq2seq_model(
         activation="tanh",
         name="enc_context_proj",
     )(enc_context_mix)
-
-    # Local FFN with residual
+    
+    # enc_outs is now a richer encoder representation, but same shape
     enc_norm = LayerNormalization(name="enc_ln")(enc_outs)
     enc_ffn = Dense(enc_units * 4, activation="relu", name="enc_ffn1")(enc_norm)
     enc_ffn = Dense(enc_units, name="enc_ffn2")(enc_ffn)
     enc_outs = Add(name="enc_ffn_res")([enc_outs, enc_ffn])
 
-    # Keep a purely local encoder representation for cross_attn_local
     enc_local = enc_outs
 
     # ===== GLOBAL ENCODER BLOCK (hierarchical on encoder side) =====
+    
     genc_ln1 = LayerNormalization(name="genc_ln1")(enc_outs)
 
     # Pool over time to get a global summary
@@ -119,30 +115,33 @@ def build_seq2seq_model(
         lambda x: tf.reduce_mean(x, axis=1),
         name="genc_pool_mean",
     )(genc_ln1)
-
+  
     # Turn pooled vector into a "global query"
     genc_query = Dense(
         enc_units,
         activation="tanh",
         name="genc_query",
-    )(genc_pool)  # (B, enc_units)
+    )(genc_pool)                   # (B, enc_units)
     genc_query = Lambda(
         lambda x: tf.expand_dims(x, axis=1),
         name="genc_query_expand",
-    )(genc_query)  # (B, 1, enc_units)
+    )(genc_query)  
 
     # Multi-head attention: global token attends over full encoder sequence
     genc_attn = MultiHeadAttention(
-        num_heads=4,
+        num_heads=2,
         key_dim=enc_units // 4,
         name="genc_mha",
     )(query=genc_query, value=genc_ln1, key=genc_ln1)  # (B, 1, enc_units)
-
+ 
     # ---- encoder global broadcast ----
     genc_broadcast = Lambda(
-        lambda pair: tf.tile(pair[0], [1, tf.shape(pair[1])[1], 1]),
+        lambda pair: tf.tile(
+            pair[0], [1, tf.shape(pair[1])[1], 1]
+        ),
         name="genc_broadcast",
     )([genc_attn, enc_outs])
+
 
     # Residual: add global context onto encoder outputs
     genc_res1 = Add(name="genc_res1")([enc_outs, genc_broadcast])
@@ -153,81 +152,53 @@ def build_seq2seq_model(
 
     enc_outs = Add(name="genc_ffn_res")([genc_ln2, genc_ffn2])
     # enc_outs stays shape (B, T_enc, enc_units) but is now globally enriched
-
-    # ===== ENCODER TRANSFORMER BLOCK (enc_tf_*) =====
-    enc_tf_proj = Dense(
-        512,
-        activation="relu",
-        name="enc_tf_proj",
-    )(enc_outs)  # (B, T_enc, 512)
-
-    enc_tf_ln1 = LayerNormalization(name="enc_tf_ln1")(enc_tf_proj)
-
-    enc_tf_mha = MultiHeadAttention(
-        num_heads=8,
-        key_dim=64,
-        name="enc_tf_mha",
-    )(enc_tf_ln1, enc_tf_ln1)  # (B, T_enc, 512)
-
-    enc_tf_res1 = Add(name="enc_tf_res1")([enc_tf_proj, enc_tf_mha])
-
-    enc_tf_ln2 = LayerNormalization(name="enc_tf_ln2")(enc_tf_res1)
-    enc_tf_ffn1 = Dense(2048, activation="relu", name="enc_tf_ffn1")(enc_tf_ln2)
-    enc_tf_ffn2 = Dense(512, name="enc_tf_ffn2")(enc_tf_ffn1)
-    enc_tf_res2 = Add(name="enc_tf_res2")([enc_tf_res1, enc_tf_ffn2])
-
-    enc_tf_back = Dense(
-        enc_units,
-        name="enc_tf_backproj",
-    )(enc_tf_res2)
-
-    # Final encoder representation: LSTM + global + transformer
-    enc_outs = Add(name="enc_tf_out_res")([enc_outs, enc_tf_back])
-
-    # ---------- DECODER ----------
+    
+    
+    # Decoder: 2-layer LSTM
     dec_inputs = Input(shape=(max_tgt,), name="dec_inputs")
     dec_emb = Embedding(vocab_tgt, emb_dim, name="dec_emb")(dec_inputs)
     dec_emb = Dropout(dropout_rate, name="dec_emb_dropout")(dec_emb)
 
-    dec_cell1 = LSTMCell(dec_units, name="dec_cell1")
-    dec_rnn1 = tf.keras.layers.RNN(
-        dec_cell1,
+    dec_lstm1 = tf.keras.layers.LSTM(
+        dec_units,
         return_sequences=True,
         return_state=True,
-        name="dec_rnn1",
+        name="dec_lstm1",
     )
-    dec_out1, _, _ = dec_rnn1(dec_emb, initial_state=enc_states)
+    dec_out1, _, _ = dec_lstm1(dec_emb, initial_state=enc_states)
 
-    dec_cell2 = LSTMCell(dec_units, name="dec_cell2")
-    dec_rnn2 = tf.keras.layers.RNN(
-        dec_cell2,
+    dec_lstm2 = tf.keras.layers.LSTM(
+        dec_units,
         return_sequences=True,
         return_state=True,
-        name="dec_rnn2",
+        name="dec_lstm2",
     )
-    dec_out2, _, _ = dec_rnn2(dec_out1)
+    dec_out2, _, _ = dec_lstm2(dec_out1)
+
 
     # Cross-attention: decoder → encoder
     cross_attn = Attention(name="cross_attn")([dec_out2, enc_outs])
 
-    # Local cross-attn to pre-global-encoder features
     cross_attn_local = Attention(name="cross_attn_local")([dec_out2, enc_local])
 
     # Self-attention on the decoder outputs: decoder → decoder
     self_attn = Attention(name="self_attn")([dec_out2, dec_out2])
-
-    # Fused decoder representation (keeps dim=dec_units)
+    
+    # but KEEP the last dim = dec_units (no shape change)
     fused = Add(name="decoder_fused")(
         [dec_out2, cross_attn, cross_attn_local, self_attn]
     )
 
-    # FFN + residual + LayerNorm
     dec_norm = LayerNormalization(name="dec_ln")(fused)
 
+    # FFN on normalized fused representation
     dec_ffn = Dense(dec_units * 4, activation="relu", name="dec_ffn1")(dec_norm)
     dec_ffn = Dense(dec_units, name="dec_ffn2")(dec_ffn)
 
+    # Residual connection back to fused
     dec_context_res = Add(name="dec_ffn_res")([fused, dec_ffn])
+
+    # 2nd LayerNorm on the residual output
     dec_context = LayerNormalization(name="dec_ln2")(dec_context_res)
 
     # STREAM 2: shallow decoder-only linear stream (extra linear reasoning path)
@@ -237,32 +208,8 @@ def build_seq2seq_model(
         name="dec_linear_stream",
     )(dec_context)
 
-    # Small transformer over the linear stream
-    lin_tf_proj = Dense(
-        256,
-        activation="relu",
-        name="lin_tf_proj",
-    )(dec_linear)  # (B, T_dec, 256)
+    dec_linear_enh = dec_linear
 
-    lin_tf_ln1 = LayerNormalization(name="lin_tf_ln1")(lin_tf_proj)
-
-    lin_tf_mha = MultiHeadAttention(
-        num_heads=4,
-        key_dim=64,
-        name="lin_tf_mha",
-    )(lin_tf_ln1, lin_tf_ln1)  # (B, T_dec, 256)
-
-    lin_tf_res1 = Add(name="lin_tf_res1")([lin_tf_proj, lin_tf_mha])
-
-    lin_tf_ln2 = LayerNormalization(name="lin_tf_ln2")(lin_tf_res1)
-    lin_tf_ffn1 = Dense(1024, activation="relu", name="lin_tf_ffn1")(lin_tf_ln2)
-    lin_tf_ffn2 = Dense(256, name="lin_tf_ffn2")(lin_tf_ffn1)
-    lin_tf_res2 = Add(name="lin_tf_res2")([lin_tf_res1, lin_tf_ffn2])
-
-    lin_tf_back = Dense(dec_units, name="lin_tf_backproj")(lin_tf_res2)
-    dec_linear_enh = Add(name="lin_tf_out_res")([dec_linear, lin_tf_back])
-
-    # ===== GLOBAL DECODER BLOCK (hierarchical on decoder side) =====
     gdec_ln1 = LayerNormalization(name="gdec_ln1")(dec_context)
 
     # Pool over time (global token)
@@ -275,21 +222,23 @@ def build_seq2seq_model(
         dec_units,
         activation="tanh",
         name="gdec_query",
-    )(gdec_pool)  # (B, dec_units)
+    )(gdec_pool)                    # (B, dec_units)
     gdec_query = Lambda(
         lambda x: tf.expand_dims(x, axis=1),
         name="gdec_query_expand",
-    )(gdec_query)  # (B, 1, dec_units)
+    )(gdec_query)
 
     gdec_attn = MultiHeadAttention(
-        num_heads=4,
+        num_heads=2,
         key_dim=dec_units // 4,
         name="gdec_mha",
     )(query=gdec_query, value=gdec_ln1, key=gdec_ln1)  # (B, 1, dec_units)
 
     # ---- decoder global broadcast ----
     gdec_broadcast = Lambda(
-        lambda pair: tf.tile(pair[0], [1, tf.shape(pair[1])[1], 1]),
+        lambda pair: tf.tile(
+            pair[0], [1, tf.shape(pair[1])[1], 1]
+        ),
         name="gdec_broadcast",
     )([gdec_attn, dec_context])
 
@@ -300,59 +249,9 @@ def build_seq2seq_model(
     gdec_ffn2 = Dense(dec_units, name="gdec_ffn2")(gdec_ffn1)
 
     dec_context = Add(name="gdec_ffn_res")([gdec_ln2, gdec_ffn2])
-    # dec_context now = GLOBAL + local, same shape as before
-
-    # === TRANSFORMER BLOCK 1 (TF1, uses encoder summary) ===
-    tf1_enc_pool = Lambda(
-        lambda x: tf.reduce_mean(x, axis=1),
-        name="tf1_enc_pool",
-    )(enc_outs)  # (B, enc_units)
-
-    tf1_enc_proj = Dense(
-        dec_units,
-        activation="tanh",
-        name="tf1_enc_proj",
-    )(tf1_enc_pool)  # (B, dec_units)
-
-    tf1_enc_expand = Lambda(
-        lambda x: tf.expand_dims(x, axis=1),
-        name="tf1_enc_expand",
-    )(tf1_enc_proj)  # (B, 1, dec_units)
-
-    tf1_enc_broadcast = Lambda(
-        lambda pair: tf.tile(pair[0], [1, tf.shape(pair[1])[1], 1]),
-        name="tf1_enc_broadcast",
-    )([tf1_enc_expand, dec_context])  # (B, T_dec, dec_units)
-
-    tf1_in = Concatenate(name="tf1_in_concat")(
-        [dec_context, tf1_enc_broadcast]
-    )  # (B, T_dec, 2*dec_units) = (B, T_dec, 256)
-
-    tf1_proj = Dense(
-        512,
-        activation="relu",
-        name="tf1_proj",
-    )(tf1_in)  # (B, T_dec, 512)
-
-    tf1_ln1 = LayerNormalization(name="tf1_ln1")(tf1_proj)
-
-    tf1_mha = MultiHeadAttention(
-        num_heads=8,
-        key_dim=64,
-        name="tf1_mha",
-    )(tf1_ln1, tf1_ln1)  # (B, T_dec, 512)
-
-    tf1_res1 = Add(name="tf1_res1")([tf1_proj, tf1_mha])
-
-    tf1_ln2 = LayerNormalization(name="tf1_ln2")(tf1_res1)
-    tf1_ffn1 = Dense(2048, activation="relu", name="tf1_ffn1")(tf1_ln2)
-    tf1_ffn2 = Dense(512, name="tf1_ffn2")(tf1_ffn1)
-    tf1_res2 = Add(name="tf1_res2")([tf1_res1, tf1_ffn2])
-
-    tf1_back = Dense(dec_units, name="tf1_backproj")(tf1_res2)
-    dec_context = Add(name="tf1_out_res")([dec_context, tf1_back])
-
-    # === SYNAPSE PATH (encoder <-> decoder) ===
+    
+    #NEW STREAM 3: dual-side synapse path (encoder <-> decoder)
+    # Project encoder + decoder into a shared space and let them attend to each other.
     syn_enc = Dense(
         dec_units,
         activation="tanh",
@@ -364,15 +263,17 @@ def build_seq2seq_model(
         name="syn_dec_proj",
     )(dec_context)  # (B, T_dec, dec_units)
 
-    syn_attn = Attention(name="syn_cross_attn")([syn_dec, syn_enc])
-
+    syn_attn = Attention(name="syn_cross_attn")([syn_dec, syn_enc])  
+    
     # ===== REFINE BLOCK (also 2× LayerNorm) =====
+
+    # LN before refine self-attention
     refine_attn_norm = LayerNormalization(
         name="refine_attn_ln"
     )(dec_context)
 
     refine_attn = MultiHeadAttention(
-        num_heads=4,
+        num_heads=2,
         key_dim=dec_units // 4,
         name="refine_self_attn",
     )(refine_attn_norm, refine_attn_norm)
@@ -390,14 +291,14 @@ def build_seq2seq_model(
         activation="relu",
         name="refine_ffn1",
     )(refine_ffn_norm)
+
     refine_ffn = Dense(
         dec_units,
         name="refine_ffn2",
     )(refine_ffn)
-
+    
     # 2 small "synapse" gates that modulate the two extra streams
-
-    # gate sees the *enriched* linear stream
+   # gate sees the *enriched* linear stream
     syn_gate1 = Dense(
         dec_units,
         activation="sigmoid",
@@ -424,34 +325,33 @@ def build_seq2seq_model(
         activation="sigmoid",
         name="syn_gate2",
     )(syn_attn)
-
+    
     gated_syn2 = Multiply(name="syn_gated2")([syn_attn, syn_gate2])
 
-    # Combine everything
+    # Residual again
     dec_final = Add(name="refine_ffn_res")(
         [refine_attn_res, refine_ffn, gated_syn1, gated_syn2]
     )
 
-    # === TRANSFORMER BLOCK 2 (TF2, just before logits) ===
     tf2_proj = Dense(
-        512,
+        dec_units,                 # 128 (or 256 if you bump units)
         activation="relu",
         name="tf2_proj",
-    )(dec_final)  # (B, T_dec, 512)
+    )(dec_final)
 
     tf2_ln1 = LayerNormalization(name="tf2_ln1")(tf2_proj)
 
     tf2_mha = MultiHeadAttention(
-        num_heads=8,
-        key_dim=64,
+        num_heads=2,               # small
+        key_dim=dec_units // 4,    # 32 if 128 units
         name="tf2_mha",
-    )(tf2_ln1, tf2_ln1)  # (B, T_dec, 512)
+    )(tf2_ln1, tf2_ln1)
 
     tf2_res1 = Add(name="tf2_res1")([tf2_proj, tf2_mha])
 
     tf2_ln2 = LayerNormalization(name="tf2_ln2")(tf2_res1)
-    tf2_ffn1 = Dense(2048, activation="relu", name="tf2_ffn1")(tf2_ln2)
-    tf2_ffn2 = Dense(512, name="tf2_ffn2")(tf2_ffn1)
+    tf2_ffn1 = Dense(dec_units * 2, activation="relu", name="tf2_ffn1")(tf2_ln2)  # 256
+    tf2_ffn2 = Dense(dec_units, name="tf2_ffn2")(tf2_ffn1)                        # 128
     tf2_res2 = Add(name="tf2_res2")([tf2_res1, tf2_ffn2])
 
     tf2_back = Dense(dec_units, name="tf2_backproj")(tf2_res2)
