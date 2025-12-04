@@ -1305,7 +1305,7 @@ def warm_start_from_old_model(model, old_model_path):
 
     print(f"✅ Warm-start finished: copied weights for {copied} layers, skipped {skipped}.")
 
-def train_model(data_path, epochs=35, batch_size=32, emb_dim=64, train_from_scratch=False, phase="all"):
+def train_model(data_path, epochs=35, batch_size=16, emb_dim=64, train_from_scratch=False, phase="all"):
     inputs, targets = load_training_data(data_path)
     split = int(0.9 * len(inputs))
     save_dir = "app/models/saved_model"
@@ -1370,7 +1370,7 @@ def train_model(data_path, epochs=35, batch_size=32, emb_dim=64, train_from_scra
         len(val_enc) // batch_size + (1 if len(val_enc) % batch_size else 0),
     )
 
-    n_rouge = 25
+    n_rouge = 2
     rouge_ds = (
         tf.data.Dataset.from_tensor_slices(((val_enc, val_dec_in), val_dec_tgt))
         .shuffle(len(val_enc))
@@ -1415,7 +1415,7 @@ def train_model(data_path, epochs=35, batch_size=32, emb_dim=64, train_from_scra
         configure_trainable_for_phase(model, phase)
 
         base_opt = Adam(
-            learning_rate=5e-6,
+            learning_rate=1e-5,
             global_clipnorm=1.0,  # gradient clipping
         )
         opt = base_opt
