@@ -57,7 +57,7 @@ TASK_RATIOS = {
     "math": 0.35,
 }
 # Optional cap on total number of examples after rebalancing
-TASK_MAX_TOTAL = 500_000   # e.g. 500_000 or None for "whatever the data allows"
+TASK_MAX_TOTAL = 600_000   # e.g. 500_000 or None for "whatever the data allows"
 ENABLE_TASK_SAMPLING = True
 
 
