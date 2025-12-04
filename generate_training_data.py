@@ -1,5 +1,7 @@
-import json
 import os
+os.environ["HF_HOME"] = "/workspace/ty/hf-cache"
+
+import json
 import random
 import re
 import sys
