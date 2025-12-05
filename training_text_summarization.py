@@ -1417,7 +1417,7 @@ class GradualUnfreezeCallback(tf.keras.callbacks.Callback):
             self.configure_fn(self.model, phase)
             self.current_phase = phase
 
-def train_model(data_path, epochs=40, batch_size=10, emb_dim=64, train_from_scratch=True, phase="all"):
+def train_model(data_path, epochs=10, batch_size=64, emb_dim=64, train_from_scratch=True, phase="all"):
     inputs, targets = load_training_data(data_path)
     split = int(0.9 * len(inputs))
     save_dir = "app/models/saved_model"
@@ -1431,13 +1431,23 @@ def train_model(data_path, epochs=40, batch_size=10, emb_dim=64, train_from_scra
     # ---------------- Tokenizers ----------------
     train_in, train_tgt = inputs[:split], targets[:split]
     val_in, val_tgt = inputs[split:], targets[split:]
-    if os.path.exists(tok_in_path) and os.path.exists(tok_tgt_path):
-        tok_in = load_tokenizer(tok_in_path)
-        tok_tgt = load_tokenizer(tok_tgt_path)
-    else:
-        tok_in = create_tokenizer(inputs, max_words=MAX_VOCAB)
-        tok_tgt = create_tokenizer(targets, max_words=MAX_VOCAB)
 
+    tok_in_path = "app/models/saved_model/tokenizer_input.json"
+    tok_tgt_path = "app/models/saved_model/tokenizer_target.json"
+    if os.path.exists(tok_in_path) and os.path.exists(tok_tgt_path):
+        print("🔁 Loading existing tokenizers...")
+        with open(tok_in_path, "r", encoding="utf-8") as f:
+            tok_in = tokenizer_from_json(f.read())
+        with open(tok_tgt_path, "r", encoding="utf-8") as f:
+            tok_tgt = tokenizer_from_json(f.read())
+    else:
+        print("🆕 Creating new tokenizers...")
+        tok_in = Tokenizer(num_words=30000, oov_token="<unk>")
+        tok_tgt = Tokenizer(num_words=30000, oov_token="<unk>")
+        tok_in.fit_on_texts(train_in)
+        tok_tgt.fit_on_texts(train_tgt)
+
+    
     vs_in = min(len(tok_in.word_index) + 1, MAX_VOCAB + 1)
     vs_tgt = min(len(tok_tgt.word_index) + 1, MAX_VOCAB + 1)
 
@@ -1528,9 +1538,9 @@ def train_model(data_path, epochs=40, batch_size=10, emb_dim=64, train_from_scra
 
 
         lr_schedule = WarmupDecaySchedule(
-            base_lr=2e-5, 
+            base_lr=1e-5, 
             warmup_lr=3e-6,
-            warmup_epochs=5, 
+            warmup_epochs=2, 
             decay_epochs=40, 
             total_steps_per_epoch=MAX_STEPS_PER_EPOCH   # adjust to match your data
         )
@@ -1647,9 +1657,25 @@ if __name__ == "__main__":
     os.system("nvidia-smi")
 
     import sys
+    import json
 
     data_path = sys.argv[1] if len(sys.argv) > 1 else "app/models/data/text/training_data.json"
     model = train_model(data_path)
     print("Training complete.")
+    # --- SAVE TOKENIZERS WITH MODEL ---
+    
+    SAVE_DIR = "app/models/saved_model"
+    os.makedirs(SAVE_DIR, exist_ok=True)
+
+    tok_in_path = os.path.join(SAVE_DIR, "tokenizer_input.json")
+    tok_tgt_path = os.path.join(SAVE_DIR, "tokenizer_target.json")
+
+    with open(tok_in_path, "w", encoding="utf-8") as f:
+        f.write(tok_in.to_json())
+    with open(tok_tgt_path, "w", encoding="utf-8") as f:
+        f.write(tok_tgt.to_json())
+
+    print(f"✅ Tokenizers saved at: {tok_in_path}, {tok_tgt_path}")
+
     print("Model saved to:", "app/models/saved_model/summarization_model.keras")
     print("Input tokenizer saved to:", "app/models/saved_model/tokenizer_input.json")
