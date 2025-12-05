@@ -1360,7 +1360,7 @@ def warm_start_from_old_model(model, old_model_path):
 
     print(f"✅ Warm-start finished: copied weights for {copied} layers, skipped {skipped}.")
 
-def train_model(data_path, epochs=10, batch_size=16, emb_dim=64, train_from_scratch=False, phase="all"):
+def train_model(data_path, epochs=10, batch_size=32, emb_dim=64, train_from_scratch=False, phase="all"):
     inputs, targets = load_training_data(data_path)
     split = int(0.9 * len(inputs))
     save_dir = "app/models/saved_model"
