@@ -1361,7 +1361,6 @@ def warm_start_from_old_model(model, old_model_path):
     print(f"✅ Warm-start finished: copied weights for {copied} layers, skipped {skipped}.")
 
 
-# --- Custom Warmup + Decay Schedule ---
 class WarmupDecaySchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
     def __init__(self, base_lr=1e-5, warmup_lr=3e-6, warmup_epochs=4, decay_epochs=20, total_steps_per_epoch=2600):
         super().__init__()
@@ -1371,21 +1370,22 @@ class WarmupDecaySchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
         self.decay_steps = decay_epochs * total_steps_per_epoch
 
     def __call__(self, step):
-        # Convert to float
         step = tf.cast(step, tf.float32)
-
-        # Phase 1: Warmup linearly (3e-6 → 1e-5)
         warmup_lr = self.warmup_lr + (self.base_lr - self.warmup_lr) * (step / self.warmup_steps)
         warmup_lr = tf.minimum(warmup_lr, self.base_lr)
-
-        # Phase 2: Exponential decay after warmup
         decay_lr = self.base_lr * tf.exp(-0.05 * ((step - self.warmup_steps) / self.decay_steps))
-        decay_lr = tf.maximum(decay_lr, 1e-6)  # prevent collapse
+        decay_lr = tf.maximum(decay_lr, 1e-6)
+        return tf.cond(step < self.warmup_steps, lambda: warmup_lr, lambda: decay_lr)
 
-        # Choose phase
-        lr = tf.cond(step < self.warmup_steps, lambda: warmup_lr, lambda: decay_lr)
-        return lr
-        
+    def get_config(self):
+        return {
+            "base_lr": self.base_lr,
+            "warmup_lr": self.warmup_lr,
+            "warmup_epochs": self.warmup_steps / self.total_steps_per_epoch if hasattr(self, "total_steps_per_epoch") else None,
+            "decay_epochs": self.decay_steps / self.total_steps_per_epoch if hasattr(self, "total_steps_per_epoch") else None,
+            "total_steps_per_epoch": getattr(self, "total_steps_per_epoch", None),
+        }
+
 class GradualUnfreezeCallback(tf.keras.callbacks.Callback):
     """
     Gradually unfreezes model layers during training to prevent forgetting.
@@ -1417,7 +1417,7 @@ class GradualUnfreezeCallback(tf.keras.callbacks.Callback):
             self.configure_fn(self.model, phase)
             self.current_phase = phase
 
-def train_model(data_path, epochs=30, batch_size=32, emb_dim=64, train_from_scratch=False, phase="tiny_and_align_only"):
+def train_model(data_path, epochs=30, batch_size=16, emb_dim=64, train_from_scratch=False, phase="tiny_and_align_only"):
     inputs, targets = load_training_data(data_path)
     split = int(0.9 * len(inputs))
     save_dir = "app/models/saved_model"
