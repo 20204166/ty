@@ -1174,6 +1174,37 @@ def configure_trainable_for_phase(model, phase: str):
         for layer in model.layers:
             layer.trainable = (layer.name in trainable_names)
 
+    elif phase == "tiny_and_align_only":
+        # Only train the *new* / recently added blocks
+        new_layer_names = [
+            # tiny encoder block
+            "tiny_enc_ln",
+            "tiny_enc_mha",
+            # Add layer "tiny_enc_res" has no weights, can be ignored or included
+
+            # tiny decoder transformer head
+            "tf2_proj",
+            "tf2_ln1",
+            "tf2_mha",
+            "tf2_res1",
+            "tf2_ln2",
+            "tf2_ffn1",
+            "tf2_ffn2",
+            "tf2_res2",
+            "tf2_backproj",
+            "tf2_out_res",
+
+            # positional alignment
+            "pos_align",
+            "pos_align_ln",   # only if you actually added this layer
+
+            # final vocab head
+            "decoder_dense",
+        ]
+
+        for layer in model.layers:
+            layer.trainable = (layer.name in new_layer_names)
+
     elif phase == "global_only":
         # only global encoder/decoder blocks trainable
         for layer in model.layers:
@@ -1329,7 +1360,7 @@ def warm_start_from_old_model(model, old_model_path):
 
     print(f"✅ Warm-start finished: copied weights for {copied} layers, skipped {skipped}.")
 
-def train_model(data_path, epochs=6, batch_size=16, emb_dim=64, train_from_scratch=False, phase="all"):
+def train_model(data_path, epochs=10, batch_size=16, emb_dim=64, train_from_scratch=False, phase="tiny_and_align_only"):
     inputs, targets = load_training_data(data_path)
     split = int(0.9 * len(inputs))
     save_dir = "app/models/saved_model"
@@ -1439,7 +1470,7 @@ def train_model(data_path, epochs=6, batch_size=16, emb_dim=64, train_from_scrat
         configure_trainable_for_phase(model, phase)
 
         base_opt = Adam(
-            learning_rate=3e-6,
+            learning_rate=1e-4,
             global_clipnorm=1.0,  # gradient clipping
         )
         opt = base_opt
