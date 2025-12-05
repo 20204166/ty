@@ -1417,7 +1417,7 @@ class GradualUnfreezeCallback(tf.keras.callbacks.Callback):
             self.configure_fn(self.model, phase)
             self.current_phase = phase
 
-def train_model(data_path, epochs=40, batch_size=16, emb_dim=64, train_from_scratch=False, phase="all"):
+def train_model(data_path, epochs=20, batch_size=16, emb_dim=64, train_from_scratch=False, phase="all"):
     inputs, targets = load_training_data(data_path)
     split = int(0.9 * len(inputs))
     save_dir = "app/models/saved_model"
@@ -1528,10 +1528,10 @@ def train_model(data_path, epochs=40, batch_size=16, emb_dim=64, train_from_scra
 
 
         lr_schedule = WarmupDecaySchedule(
-            base_lr=2e-5, 
-            warmup_lr=1e-5,
+            base_lr=8e-6, 
+            warmup_lr=3e-6,
             warmup_epochs=4, 
-            decay_epochs=40, 
+            decay_epochs=20, 
             total_steps_per_epoch=MAX_STEPS_PER_EPOCH   # adjust to match your data
         )
         optimizer = tf.keras.optimizers.Adam(
