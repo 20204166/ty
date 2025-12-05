@@ -1458,7 +1458,7 @@ def train_model(data_path, epochs=30, batch_size=32, emb_dim=64, train_from_scra
     num_train = len(train_enc)
 
     #  cap steps/epoch so Kaggle doesn't take 3h
-    MAX_STEPS_PER_EPOCH = 36000# you can drop to 1000 if still too slow
+    MAX_STEPS_PER_EPOCH = 3600# you can drop to 1000 if still too slow
     steps_per_epoch = min(
         MAX_STEPS_PER_EPOCH,
         max(1, num_train // batch_size),
@@ -1528,10 +1528,10 @@ def train_model(data_path, epochs=30, batch_size=32, emb_dim=64, train_from_scra
 
 
         lr_schedule = WarmupDecaySchedule(
-            base_lr=8e-6, 
-            warmup_lr=2e-6,
+            base_lr=1e-5, 
+            warmup_lr=3e-6,
             warmup_epochs=1, 
-            decay_epochs=20, 
+            decay_epochs=30, 
             total_steps_per_epoch=MAX_STEPS_PER_EPOCH   # adjust to match your data
         )
         optimizer = tf.keras.optimizers.Adam(
