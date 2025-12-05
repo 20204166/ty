@@ -1470,7 +1470,7 @@ def train_model(data_path, epochs=10, batch_size=16, emb_dim=64, train_from_scra
         configure_trainable_for_phase(model, phase)
 
         base_opt = Adam(
-            learning_rate=1e-4,
+            learning_rate=5e-5,
             global_clipnorm=1.0,  # gradient clipping
         )
         opt = base_opt
