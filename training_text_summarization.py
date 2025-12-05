@@ -1385,8 +1385,39 @@ class WarmupDecaySchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
         # Choose phase
         lr = tf.cond(step < self.warmup_steps, lambda: warmup_lr, lambda: decay_lr)
         return lr
+        
+class GradualUnfreezeCallback(tf.keras.callbacks.Callback):
+    """
+    Gradually unfreezes model layers during training to prevent forgetting.
+    Phases (by default):
+      1. tiny_and_align_only  (warmup)
+      2. encoder_frozen       (decoder + head trainable)
+      3. all                  (full fine-tune)
+    """
+    def __init__(self, phase_schedule, configure_fn):
+        """
+        Args:
+            phase_schedule: list of tuples (epoch_threshold, phase_name)
+                e.g. [(0, "tiny_and_align_only"), (6, "encoder_frozen"), (10, "all")]
+            configure_fn: function to call (e.g. configure_trainable_for_phase)
+        """
+        super().__init__()
+        self.phase_schedule = sorted(phase_schedule, key=lambda x: x[0])
+        self.configure_fn = configure_fn
+        self.current_phase = None
 
-def train_model(data_path, epochs=25, batch_size=32, emb_dim=64, train_from_scratch=False, phase="all"):
+    def on_epoch_begin(self, epoch, logs=None):
+        # Find which phase applies for this epoch
+        phase = None
+        for start_epoch, name in self.phase_schedule:
+            if epoch >= start_epoch:
+                phase = name
+        if phase and phase != self.current_phase:
+            print(f"\n🔁 Switching to phase '{phase}' at epoch {epoch}")
+            self.configure_fn(self.model, phase)
+            self.current_phase = phase
+
+def train_model(data_path, epochs=30, batch_size=32, emb_dim=64, train_from_scratch=False, phase="tiny_and_align_only"):
     inputs, targets = load_training_data(data_path)
     split = int(0.9 * len(inputs))
     save_dir = "app/models/saved_model"
@@ -1497,9 +1528,9 @@ def train_model(data_path, epochs=25, batch_size=32, emb_dim=64, train_from_scra
 
 
         lr_schedule = WarmupDecaySchedule(
-            base_lr=1e-5, 
-            warmup_lr=3e-6,
-            warmup_epochs=6, 
+            base_lr=8e-6, 
+            warmup_lr=2e-6,
+            warmup_epochs=3, 
             decay_epochs=20, 
             total_steps_per_epoch=MAX_STEPS_PER_EPOCH   # adjust to match your data
         )
@@ -1545,9 +1576,19 @@ def train_model(data_path, epochs=25, batch_size=32, emb_dim=64, train_from_scra
             min_acc_gain=0.0005,  # how much better acc must be
             max_loss_increase=0.10,
         )
+        gradual_unfreeze = GradualUnfreezeCallback(
+            phase_schedule=[
+                (0, "tiny_and_align_only"),   # epochs 0–5
+                (6, "encoder_frozen"),        # epochs 6–9
+                (10, "all"),                  # from epoch 10 onward
+            ],
+            configure_fn=configure_trainable_for_phase
+        )
+
 
 
         callbacks = [
+            gradual_unfreeze,
             rouge_cb,
             EarlyStopping(
                 monitor="val_token_accuracy",
