@@ -1530,7 +1530,7 @@ def train_model(data_path, epochs=30, batch_size=32, emb_dim=64, train_from_scra
         lr_schedule = WarmupDecaySchedule(
             base_lr=1e-5, 
             warmup_lr=3e-6,
-            warmup_epochs=1, 
+            warmup_epochs=4, 
             decay_epochs=30, 
             total_steps_per_epoch=MAX_STEPS_PER_EPOCH   # adjust to match your data
         )
@@ -1580,7 +1580,7 @@ def train_model(data_path, epochs=30, batch_size=32, emb_dim=64, train_from_scra
             phase_schedule=[
                 (0, "tiny_and_align_only"),   # epochs 0–5
                 (2, "encoder_frozen"),        # epochs 6–9
-                (8, "all"),                  # from epoch 10 onward
+                (9, "all"),                  # from epoch 10 onward
             ],
             configure_fn=configure_trainable_for_phase
         )
