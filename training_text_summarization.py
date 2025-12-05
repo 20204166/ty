@@ -1360,7 +1360,33 @@ def warm_start_from_old_model(model, old_model_path):
 
     print(f"✅ Warm-start finished: copied weights for {copied} layers, skipped {skipped}.")
 
-def train_model(data_path, epochs=4, batch_size=32, emb_dim=64, train_from_scratch=False, phase="all"):
+
+# --- Custom Warmup + Decay Schedule ---
+class WarmupDecaySchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
+    def __init__(self, base_lr=1e-5, warmup_lr=3e-6, warmup_epochs=4, decay_epochs=20, total_steps_per_epoch=2600):
+        super().__init__()
+        self.base_lr = base_lr
+        self.warmup_lr = warmup_lr
+        self.warmup_steps = warmup_epochs * total_steps_per_epoch
+        self.decay_steps = decay_epochs * total_steps_per_epoch
+
+    def __call__(self, step):
+        # Convert to float
+        step = tf.cast(step, tf.float32)
+
+        # Phase 1: Warmup linearly (3e-6 → 1e-5)
+        warmup_lr = self.warmup_lr + (self.base_lr - self.warmup_lr) * (step / self.warmup_steps)
+        warmup_lr = tf.minimum(warmup_lr, self.base_lr)
+
+        # Phase 2: Exponential decay after warmup
+        decay_lr = self.base_lr * tf.exp(-0.05 * ((step - self.warmup_steps) / self.decay_steps))
+        decay_lr = tf.maximum(decay_lr, 1e-6)  # prevent collapse
+
+        # Choose phase
+        lr = tf.cond(step < self.warmup_steps, lambda: warmup_lr, lambda: decay_lr)
+        return lr
+
+def train_model(data_path, epochs=25, batch_size=32, emb_dim=64, train_from_scratch=False, phase="all"):
     inputs, targets = load_training_data(data_path)
     split = int(0.9 * len(inputs))
     save_dir = "app/models/saved_model"
@@ -1469,14 +1495,21 @@ def train_model(data_path, epochs=4, batch_size=32, emb_dim=64, train_from_scrat
         # -------- Optimizer: smaller LR + gradient clipping --------
         configure_trainable_for_phase(model, phase)
 
-        base_opt = Adam(
-            learning_rate=3e-6,
-            global_clipnorm=1.0,  # gradient clipping
+
+        lr_schedule = WarmupDecaySchedule(
+            base_lr=1e-5, 
+            warmup_lr=3e-6,
+            warmup_epochs=6, 
+            decay_epochs=20, 
+            total_steps_per_epoch=MAX_STEPS_PER_EPOCH   # adjust to match your data
         )
-        opt = base_opt
+        optimizer = tf.keras.optimizers.Adam(
+            learning_rate=lr_schedule,
+            global_clipnorm=1.0
+        )
 
         model.compile(
-            optimizer=opt,
+            optimizer=optimizer,
             loss=masked_sparse_ce_tf,
             metrics=[tf.keras.metrics.SparseCategoricalAccuracy(name="token_accuracy")],
         )
