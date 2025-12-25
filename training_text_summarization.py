@@ -52,9 +52,9 @@ max_length_input = 512
 max_length_target = 256
 # Desired task ratios for multi-task training (only used if the data has "task")
 TASK_RATIOS = {
-    "summarization": 0.3,
-    "code_cpp": 0.35,
-    "math": 0.35,
+    "summarization": 0.4,
+    "code_cpp": 0.3,
+    "math": 0.3,
 }
 # Optional cap on total number of examples after rebalancing
 TASK_MAX_TOTAL = 500_000   # e.g. 500_000 or None for "whatever the data allows"
@@ -292,9 +292,9 @@ def build_seq2seq_model(
     emb_dim,
     max_in,
     max_tgt,
-    enc_units=128,
-    dec_units=128,
-    dropout_rate=0.3,
+    enc_units=256,
+    dec_units=256,
+    dropout_rate=0.4,
 ):
     enc_inputs = Input(shape=(max_in,), name="enc_inputs")
     enc_emb = Embedding(vocab_in, emb_dim, name="enc_emb")(enc_inputs)
